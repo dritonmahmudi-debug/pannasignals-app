@@ -1,0 +1,80 @@
+name: panna_signals
+description: "Panna Signals – Simple, clear Forex & Crypto signals."
+publish_to: 'none'
+
+version: 1.0.2+3
+
+environment:
+  sdk: ^3.10.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  shared_preferences: ^2.2.2
+  intl: ^0.19.0
+
+  # Firebase
+  firebase_core: ^4.2.1
+  firebase_messaging: ^16.0.4
+  firebase_auth: ^6.1.2
+  firebase_analytics: ^12.0.4
+  firebase_crashlytics: ^5.0.5
+
+  permission_handler: ^12.0.1
+
+  # UI
+  cupertino_icons: ^1.0.8
+  share_plus: ^10.0.0
+  url_launcher: ^6.3.2
+  in_app_purchase: ^3.2.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.4.1
+  image: ^4.0.20
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/
+
+# =========================
+# App Icon (flutter_launcher_icons)
+# =========================
+flutter_launcher_icons:
+  android: true
+  ios: true
+  # Use the foreground asset (transparent PNG) so the generated adaptive icon
+  # does not contain an unwanted white square or circle behind the logo.
+  # If your foreground image contains a white backdrop, replace it with a
+  # transparent PNG (logo alone) and keep the background color below.
+  image_path: assets/icons/panna_signals_foreground.png
+
+  adaptive_icon_foreground: assets/icons/panna_signals_foreground.png
+  adaptive_icon_background: "#0B0F19"
+  # For App Store compliance: icons should not contain an alpha channel.
+  # If you plan to publish to iOS App Store, consider setting this to true
+  # after confirming your foreground image looks good without alpha.
+  remove_alpha_ios: true
+
+
+# =========================
+# Splash Screen (flutter_native_splash)
+# =========================
+flutter_native_splash:
+  color: "#0B0F19"
+  # Use the transparent foreground image for splash; the background color
+  # above will paint the full screen behind the logo. Replace the image if
+  # you want a different composition (e.g. full-bleed png).
+  image: assets/icons/panna_signals_foreground.png
+  android: true
+  ios: true
+
+  android_12:
+    color: "#0B0F19"
+    # Use same foreground transparent logo for Android 12 splash as well.
+    image: assets/icons/panna_signals_foreground.png

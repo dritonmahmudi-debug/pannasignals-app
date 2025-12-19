@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=512, initial-scale=1.0">
+    <title>Panna Signals - App Icon 512x512</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .download-btn {
+            margin-top: 30px;
+            padding: 15px 40px;
+            background: #14f4c4;
+            color: #000;
+            border: none;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .download-btn:hover {
+            background: #0ec9a0;
+            transform: scale(1.05);
+        }
+
+        .app-icon {
+            width: 512px;
+            height: 512px;
+            background: #000000;
+            border-radius: 115px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            box-shadow: 0 30px 80px rgba(0, 0, 0, 0.5);
+            overflow: hidden;
+        }
+
+        /* Glossy overlay effect */
+        .app-icon::before {
+            display: none;
+        }
+
+        /* Subtle pattern */
+        .app-icon::after {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background-image: 
+                repeating-linear-gradient(45deg, transparent, transparent 20px, rgba(255,255,255,.03) 20px, rgba(255,255,255,.03) 40px);
+            pointer-events: none;
+        }
+
+        /* Icon symbol container */
+        .icon-content {
+            position: relative;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Candlestick chart container */
+        .candlestick-chart {
+            width: 320px;
+            height: 280px;
+            position: relative;
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-around;
+            padding: 0 20px 30px;
+        }
+
+        /* Individual candlestick */
+        .candle {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        /* Candle wick (line) */
+        .wick {
+            width: 4px;
+            background: #ffffff;
+            border-radius: 2px;
+        }
+
+        /* Candle body */
+        .body {
+            width: 28px;
+            border-radius: 3px;
+            margin: -1px 0;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Green (bullish) candle */
+        .candle.green .wick {
+            background: #00ff00;
+        }
+        
+        .candle.green .body {
+            background: #00ff00;
+            border: 2px solid #00ff00;
+        }
+
+        /* Red (bearish) candle */
+        .candle.red .wick {
+            background: #ff0000;
+        }
+        
+        .candle.red .body {
+            background: #ff0000;
+            border: 2px solid #ff0000;
+        }
+
+        /* Specific candle sizes */
+        .c1 .wick { height: 80px; }
+        .c1 .body { height: 50px; }
+        
+        .c2 .wick { height: 120px; }
+        .c2 .body { height: 85px; }
+        
+        .c3 .wick { height: 90px; }
+        .c3 .body { height: 60px; }
+        
+        .c4 .wick { height: 150px; }
+        .c4 .body { height: 110px; }
+        
+        .c5 .wick { height: 180px; }
+        .c5 .body { height: 140px; }
+
+        /* Trend arrow */
+        .trend-arrow {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 0;
+            height: 0;
+            border-left: 30px solid transparent;
+            border-right: 30px solid transparent;
+            border-bottom: 50px solid #14f4c4;
+            transform: rotate(45deg);
+            filter: drop-shadow(0 3px 6px rgba(20, 244, 196, 0.5));
+        }
+
+        /* Instructions overlay */
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 10;
+            text-align: center;
+        }
+
+        @media print {
+            body {
+                background: transparent;
+            }
+            .instructions {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-icon">
+        <div class="icon-content">
+            <div class="candlestick-chart">
+                <!-- Candlestick 1 - Small green -->
+                <div class="candle green c1">
+                    <div class="wick"></div>
+                    <div class="body"></div>
+                    <div class="wick" style="height: 15px;"></div>
+                </div>
+
+                <!-- Candlestick 2 - Tall green -->
+                <div class="candle green c2">
+                    <div class="wick"></div>
+                    <div class="body"></div>
+                    <div class="wick" style="height: 20px;"></div>
+                </div>
+
+                <!-- Candlestick 3 - Medium red -->
+                <div class="candle red c3">
+                    <div class="wick"></div>
+                    <div class="body"></div>
+                    <div class="wick" style="height: 18px;"></div>
+                </div>
+
+                <!-- Candlestick 4 - Large green -->
+                <div class="candle green c4">
+                    <div class="wick"></div>
+                    <div class="body"></div>
+                    <div class="wick" style="height: 25px;"></div>
+                </div>
+
+                <!-- Candlestick 5 - Very tall green (uptrend) -->
+                <div class="candle green c5">
+                    <div class="wick"></div>
+                    <div class="body"></div>
+                    <div class="wick" style="height: 30px;"></div>
+                </div>
+                
+                <!-- Trend arrow -->
+                <div class="trend-arrow"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="instructions">
+        💡 Screenshot exactly 512x512px<br>
+        Use Snipping Tool or Browser DevTools → Capture Node Screenshot<br>
+        Save as: <strong>app_icon_512.png</strong>
+    </div>
+
+    <button class="download-btn" onclick="downloadIcon()">📥 Shkarko Ikonën 512x512</button>
+
+    <script>
+        async function downloadIcon() {
+            const iconElement = document.querySelector('.app-icon');
+            
+            // Create canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            
+            // Use html2canvas library inline
+            const html2canvas = await (async () => {
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
+                document.head.appendChild(script);
+                await new Promise(resolve => script.onload = resolve);
+                return window.html2canvas;
+            })();
+            
+            // Capture the icon
+            const iconCanvas = await html2canvas(iconElement, {
+                width: 512,
+                height: 512,
+                scale: 1,
+                backgroundColor: null
+            });
+            
+            // Download
+            const link = document.createElement('a');
+            link.download = 'app_icon_512.png';
+            link.href = iconCanvas.toDataURL('image/png');
+            link.click();
+            
+            console.log('✅ Icon downloaded as app_icon_512.png (512x512px)');
+        }
+        
+        console.log('App Icon ready! Size: 512x512px');
+        console.log('Click the button below to download automatically!');
+    </script>
+</body>
+</html>

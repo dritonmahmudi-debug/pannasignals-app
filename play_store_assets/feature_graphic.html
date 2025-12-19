@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=1024, initial-scale=1.0">
+    <title>Panna Signals - Feature Graphic</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #1a1a1a;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .feature-graphic {
+            width: 1024px;
+            height: 500px;
+            background: linear-gradient(135deg, #0b0f19 0%, #14f4c4 50%, #00b4d8 100%);
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Background pattern */
+        .pattern {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            opacity: 0.1;
+            background-image: 
+                repeating-linear-gradient(45deg, transparent, transparent 35px, rgba(255,255,255,.1) 35px, rgba(255,255,255,.1) 70px);
+        }
+
+        /* Content container */
+        .content {
+            position: relative;
+            z-index: 2;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 60px 80px;
+            height: 100%;
+        }
+
+        /* Left side - Text */
+        .text-section {
+            flex: 1;
+            color: white;
+        }
+
+        .app-name {
+            font-size: 72px;
+            font-weight: 800;
+            margin-bottom: 16px;
+            text-shadow: 2px 2px 8px rgba(0, 0, 0, 0.3);
+            letter-spacing: -1px;
+        }
+
+        .tagline {
+            font-size: 32px;
+            font-weight: 300;
+            margin-bottom: 24px;
+            opacity: 0.95;
+            text-shadow: 1px 1px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .features {
+            display: flex;
+            gap: 32px;
+            margin-top: 32px;
+        }
+
+        .feature-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 18px;
+            font-weight: 500;
+        }
+
+        .feature-icon {
+            width: 36px;
+            height: 36px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        /* Right side - App icon mockup */
+        .icon-section {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 40px;
+        }
+
+        .app-icon {
+            width: 280px;
+            height: 280px;
+            background: linear-gradient(135deg, #14f4c4 0%, #00b4d8 100%);
+            border-radius: 70px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+            position: relative;
+        }
+
+        .app-icon::before {
+            content: '';
+            position: absolute;
+            inset: 8px;
+            background: linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%);
+            border-radius: 62px;
+            pointer-events: none;
+        }
+
+        .icon-symbol {
+            font-size: 140px;
+            color: #0b0f19;
+            font-weight: 800;
+        }
+
+        /* Phone mockup */
+        .phone-mockup {
+            width: 160px;
+            height: 320px;
+            background: #1f2937;
+            border-radius: 24px;
+            padding: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .phone-screen {
+            flex: 1;
+            background: linear-gradient(180deg, #0b0f19 0%, #1a1f2e 100%);
+            border-radius: 16px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .signal-card {
+            background: rgba(20, 244, 196, 0.1);
+            border-left: 3px solid #14f4c4;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 10px;
+            color: white;
+        }
+
+        .signal-card.sell {
+            border-left-color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .badge {
+            display: none;
+        }
+
+        /* Instructions */
+        .instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 10;
+        }
+
+        @media print {
+            body {
+                background: white;
+            }
+            .instructions {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="feature-graphic">
+        <div class="pattern"></div>
+        
+        <div class="badge">FREE</div>
+
+        <div class="content">
+            <!-- Left: Text -->
+            <div class="text-section">
+                <h1 class="app-name">Panna Signals</h1>
+                <p class="tagline">Forex & Crypto Trading Signals</p>
+                
+                <div class="features">
+                    <div class="feature-item">
+                        <div class="feature-icon">📊</div>
+                        <span>Real-Time</span>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">🔔</div>
+                        <span>Push Alerts</span>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon">📈</div>
+                        <span>Analytics</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right: App icon + Phone -->
+            <div class="icon-section">
+                <div class="app-icon">
+                    <div class="icon-symbol">📈</div>
+                </div>
+
+                <div class="phone-mockup">
+                    <div class="phone-screen">
+                        <div class="signal-card">
+                            <div>EURUSD BUY</div>
+                            <div style="font-size: 8px; opacity: 0.7;">TP: 1.1040 | SL: 1.0960</div>
+                        </div>
+                        <div class="signal-card sell">
+                            <div>BTCUSDT SELL</div>
+                            <div style="font-size: 8px; opacity: 0.7;">TP: 41000 | SL: 42500</div>
+                        </div>
+                        <div class="signal-card">
+                            <div>GBPUSD BUY</div>
+                            <div style="font-size: 8px; opacity: 0.7;">TP: 1.2750 | SL: 1.2650</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="instructions">
+        💡 Instructions: Take screenshot (1024x500) or right-click → "Save as PNG" using browser dev tools
+    </div>
+
+    <script>
+        // Optional: Auto-download as PNG
+        function downloadAsPNG() {
+            const element = document.querySelector('.feature-graphic');
+            
+            // Using html2canvas library (you'd need to include it)
+            // For now, just inform user to screenshot
+            alert('Please use:\n\n1. Screenshot tool (Win + Shift + S)\n2. Crop to exactly 1024x500\n3. Save as feature_graphic.png\n\nOr use browser DevTools → Screenshot Node');
+        }
+
+        // You can call downloadAsPNG() if needed
+        console.log('Feature graphic ready! Size: 1024x500px');
+        console.log('To save:');
+        console.log('1. Press F12 to open DevTools');
+        console.log('2. Click the three dots (⋮) → More tools → Screenshot');
+        console.log('3. Or use Windows Snipping Tool (Win + Shift + S)');
+    </script>
+</body>
+</html>

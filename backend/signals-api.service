@@ -1,0 +1,21 @@
+[Unit]
+Description=Signals Trading API Backend
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/signals_backend
+Environment="PATH=/var/www/signals_backend/venv/bin"
+ExecStart=/var/www/signals_backend/venv/bin/uvicorn main_full:app --host 0.0.0.0 --port 8000 --workers 2
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

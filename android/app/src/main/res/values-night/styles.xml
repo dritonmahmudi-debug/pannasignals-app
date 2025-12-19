@@ -1,0 +1,16 @@
+<resources>
+    <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <!-- SFOND I ZI për splash -->
+        <!-- Ikona e app-it në splash -->
+        <!-- Pa rreth të bardhë prapa ikonës -->
+        <!-- Background pasi të mbarojë animacioni -->
+        <item name="android:windowBackground">@android:color/black</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">false</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+    <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>

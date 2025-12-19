@@ -1,0 +1,16 @@
+[Unit]
+Description=Crypto Swing Trading Bot
+After=network.target signals-api.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/signals_backend/bots
+Environment="PATH=/var/www/signals_backend/venv/bin"
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/var/www/signals_backend/venv/bin/python3 crypto_swing_bot.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

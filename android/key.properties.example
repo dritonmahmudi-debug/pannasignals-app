@@ -1,0 +1,7 @@
+# Example key.properties - DO NOT COMMIT
+# Create a keystore (replace the values below).
+# KEY_LOC is relative to the android directory
+storePassword=your_store_password
+keyPassword=your_key_password
+keyAlias=your_key_alias
+storeFile=../keystore/my-release-key.jks
