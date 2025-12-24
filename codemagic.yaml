@@ -8,6 +8,8 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
+      groups:
+        - panna
 
       ios_signing:
         distribution_type: app_store
@@ -77,11 +79,11 @@ workflows:
           success: true
           failure: true
 
-      app_store_connect:
-        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
-        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-        submit_to_testflight: true
+        app_store_connect:
+         api_key: $APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY
+         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+         submit_to_testflight: true
 
 
   android-workflow:
