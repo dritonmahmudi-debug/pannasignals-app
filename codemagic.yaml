@@ -17,8 +17,6 @@ workflows:
 
       vars:
         BUNDLE_ID: "com.panna.signalsApp"
-        XCODE_WORKSPACE: "Runner.xcworkspace"
-        XCODE_SCHEME: "Runner"
         BUILD_NAME: "1.0.2"
         BUILD_NUMBER: "3"
 
@@ -44,8 +42,6 @@ workflows:
             --certificate-key @env:CERTIFICATE_PRIVATE_KEY
 
           keychain add-certificates
-
-          # Important: force App Store method (not ad-hoc)
           xcode-project use-profiles --project ios/Runner.xcodeproj --archive-method app-store
 
       - name: Get Flutter packages
@@ -71,21 +67,19 @@ workflows:
       - /tmp/xcodebuild_logs/*.log
       - flutter_drive.log
 
-        publishing:
-         email:
-          recipients:
-           - driton.mahmudi@gmail.com
-          notify:
-           success: true
-           failure: true
+    publishing:
+      email:
+        recipients:
+          - driton.mahmudi@gmail.com
+        notify:
+          success: true
+          failure: true
 
-         app_store_connect:
-          api_key: $APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY
-          key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
-          issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-          submit_to_testflight: true
-
-
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true
 
   android-workflow:
     name: Android Workflow
