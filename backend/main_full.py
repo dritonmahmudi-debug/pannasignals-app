@@ -84,10 +84,11 @@ class Device(Base):
 class BotStatus(Base):
     """
     Status i botëve/skriptave (heartbeat).
-    """
-
-    __tablename__ = "bot_status"
-
+        status = Column(String, default="open", index=True)  # open / closed
+        hit = Column(String, nullable=True)  # "tp", "sl", "manual", "be", etj.
+        pnl_percent = Column(Float, nullable=True)
+        extra_text = Column(String, nullable=True)
+        sl_tp_hit_time = Column(DateTime(timezone=True), nullable=True)
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, index=True, nullable=False)
     last_heartbeat = Column(DateTime(timezone=True), nullable=False)
@@ -363,6 +364,8 @@ def send_push_to_all_devices(
                 ),
                 data=str_data,
                 token=token,
+                android=messaging.AndroidConfig(priority='high'),
+                apns=messaging.APNSConfig(headers={'apns-priority': '10'}),
             )
             response = messaging.send(message)
             print(
@@ -542,7 +545,11 @@ def list_signals(
     - analysis_type (p.sh. forex_scalping, crypto_swing)
     - status (open/closed)
     """
-    q = db.query(Signal).order_by(Signal.time.desc())
+    # Rendit sipas sl_tp_hit_time nëse ekziston, përndryshe sipas time
+    from sqlalchemy import case
+    q = db.query(Signal).order_by(
+        case([(Signal.sl_tp_hit_time != None, Signal.sl_tp_hit_time)], else_=Signal.time).desc()
+    )
 
     if source:
         q = q.filter(Signal.source == source)

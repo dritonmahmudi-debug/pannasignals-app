@@ -1,4 +1,6 @@
-﻿import time
+﻿def calculate_ma(df, period=50):
+    return df['close'].rolling(window=period).mean().iloc[-1]
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Tuple, Optional, List
 
@@ -36,7 +38,7 @@ LIMIT_D1 = 260      # mjafton pÃ«r EMA200
 LIMIT_4H = 300
 
 # Sa sekonda pushim mes skanimeve
-SLEEP_SECONDS = 1800   # 15 minuta
+SLEEP_SECONDS = 600   # 10 minuta
 
 # Risk pÃ«r swing
 SL_PCT = 0.015      # 1.5%
@@ -161,6 +163,23 @@ def fetch_klines(symbol: str, interval: str, limit: int) -> pd.DataFrame:
 # ======================================================
 #                  ATR (Average True Range)
 # ======================================================
+
+# ======================================================
+#                  RSI (Relative Strength Index)
+# ======================================================
+
+def calculate_rsi(df: pd.DataFrame, period: int = 14) -> float:
+    """
+    Llogarit RSI për df['Close'].
+    Kthen: RSI vlera e fundit (0-100).
+    """
+    close = df['Close']
+    delta = close.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+    rs = gain / (loss + 1e-9)
+    rsi = 100 - (100 / (1 + rs))
+    return float(rsi.iloc[-1]) if len(rsi) > 0 else 0.0
 
 def calculate_atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
     """
@@ -777,6 +796,15 @@ def analyze_symbol(symbol: str):
     crt_bull = detect_crt(h4, swing_high_idx, swing_low_idx, "bull")
     crt_bear = detect_crt(h4, swing_high_idx, swing_low_idx, "bear")
 
+    # 12) MA50 Trend (FAKTOR I RI)
+    ma50 = calculate_ma(h4, period=50)
+    if current_price > ma50:
+        buy_score += 1
+        buy_details.append(f"MA50_BULL")
+    elif current_price < ma50:
+        sell_score += 1
+        sell_details.append(f"MA50_BEAR")
+
     # ==================================================
     #           SCORE BUY / SELL (8 pika tani!)
     # ==================================================
@@ -858,6 +886,31 @@ def analyze_symbol(symbol: str):
     elif ema_alignment == "bear":
         sell_score += 1
         sell_details.append("EMA_ALIGNED")
+
+    # 9) RSI absolute value (NEW)
+    rsi_value = calculate_rsi(h4, period=14)
+    if rsi_value < 32:
+        buy_score += 1
+        buy_details.append(f"RSI_{rsi_value:.1f}")
+    if rsi_value > 68:
+        sell_score += 1
+        sell_details.append(f"RSI_{rsi_value:.1f}")
+    # 10) Stochastic Oscillator
+    k, d = calculate_stochastic(h4, k_period=14, d_period=3)
+    if k < 20 and k > d:
+        buy_score += 1
+        buy_details.append(f"STOCH_K={k:.1f}")
+    if k > 80 and k < d:
+        sell_score += 1
+        sell_details.append(f"STOCH_K={k:.1f}")
+    # 11) Candle Pattern Detection
+    bullish_candle, bearish_candle = detect_candle_pattern(h4)
+    if bullish_candle:
+        buy_score += 1
+        buy_details.append("CANDLE_BULLISH")
+    if bearish_candle:
+        sell_score += 1
+        sell_details.append("CANDLE_BEARISH")
 
     # ==================================================
     #              DECISION LOGIC

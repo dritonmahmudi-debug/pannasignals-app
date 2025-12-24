@@ -32,14 +32,15 @@ SYMBOLS = [
     "AUDCHF=X", "AUDJPY=X", "NZDCAD=X", "NZDCHF=X", "NZDJPY=X",
     "CADCHF=X", "CADJPY=X", "CHFJPY=X"
 ]
+    from datetime import datetime  # Ensure datetime is imported for new factors
+
 
 INTERVAL = "5m"         # Scalping TF
 LOOKBACK_DAYS = 3       # Sa ditÃ« mbrapa pÃ«r 5m
 SLEEP_SECONDS = 60      # Sa sekonda pushim mes skanimeve
 
-# ATR multiplier pÃ«r forex scalping
-ATR_MULTIPLIER_SL = 1.0  # SL = ATR * 1.0
-ATR_MULTIPLIER_TP = 2.5  # TP = ATR * 2.5
+SL_PERCENT = 0.01  # 1% stop loss
+TP_PERCENT = 0.03  # 3% take profit
 
 # Minimum Risk/Reward ratio
 MIN_RISK_REWARD = 1.8
@@ -656,16 +657,13 @@ def analyze_symbol(symbol: str):
 
     last_signal_time[key] = now
 
-    # ===== ATR-BASED DYNAMIC SL/TP =====
-    atr_sl_distance = last_atr * ATR_MULTIPLIER_SL
-    atr_tp_distance = last_atr * ATR_MULTIPLIER_TP
-    
+    # ===== PERCENT-BASED SL/TP =====
     if side == "BUY":
-        sl = last_close - atr_sl_distance
-        tp = last_close + atr_tp_distance
+        sl = last_close * (1 - SL_PERCENT)
+        tp = last_close * (1 + TP_PERCENT)
     else:  # SELL
-        sl = last_close + atr_sl_distance
-        tp = last_close - atr_tp_distance
+        sl = last_close * (1 + SL_PERCENT)
+        tp = last_close * (1 - TP_PERCENT)
     
     # Risk/Reward check
     risk = abs(last_close - sl)

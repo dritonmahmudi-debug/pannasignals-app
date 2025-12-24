@@ -51,9 +51,8 @@ SLEEP_SECONDS = 900        # 15 minuta pushim mes skanimeve
 # Scoring - kÃ«rkojmÃ« 4 nga 7 konfirmime
 MIN_SCORE_FOR_SIGNAL = 4
 
-# ATR multiplier pÃ«r forex swing
-ATR_MULTIPLIER_SL = 1.5  # SL = ATR * 1.5
-ATR_MULTIPLIER_TP = 3.5  # TP = ATR * 3.5
+SL_PERCENT = 0.01  # 1% stop loss
+TP_PERCENT = 0.03  # 3% take profit
 
 # Minimum Risk/Reward ratio
 MIN_RISK_REWARD = 2.0
@@ -758,11 +757,29 @@ def analyze_symbol(symbol: str):
         # print(f"[{symbol}] ATR shumÃ« i ulÃ«t, skip.")
         return
 
-    # ===== SCORE BUY / SELL (8 pika tani!) =====
+    # ===== SCORE BUY / SELL (10 pika tani!) =====
     buy_score = 0
     sell_score = 0
     buy_details = []
     sell_details = []
+
+    # 9) MACD Crossover
+    macd_line, signal_line, histogram, macd_bull_cross, macd_bear_cross = calculate_macd(h4)
+    if macd_bull_cross:
+        buy_score += 1
+        buy_details.append("MACD_CROSS")
+    if macd_bear_cross:
+        sell_score += 1
+        sell_details.append("MACD_CROSS")
+
+    # 10) Stochastic
+    k_val, d_val, stoch_oversold_cross, stoch_overbought_cross = calculate_stochastic(h4)
+    if stoch_oversold_cross:
+        buy_score += 1
+        buy_details.append("STOCH_OVER")
+    if stoch_overbought_cross:
+        sell_score += 1
+        sell_details.append("STOCH_OVER")
     
     # 1) D1 trend
     if trend_d1 == "bull":
@@ -895,16 +912,13 @@ def analyze_symbol(symbol: str):
     last_signal_side[symbol] = signal_side
     last_signal_time[symbol] = now_utc
 
-    # ===== ATR-BASED DYNAMIC SL/TP =====
-    atr_sl_distance = current_atr * ATR_MULTIPLIER_SL
-    atr_tp_distance = current_atr * ATR_MULTIPLIER_TP
-    
+    # ===== PERCENT-BASED SL/TP =====
     if signal_side == "BUY":
-        sl = current_price - atr_sl_distance
-        tp = current_price + atr_tp_distance
+        sl = current_price * (1 - SL_PERCENT)
+        tp = current_price * (1 + TP_PERCENT)
     else:  # SELL
-        sl = current_price + atr_sl_distance
-        tp = current_price - atr_tp_distance
+        sl = current_price * (1 + SL_PERCENT)
+        tp = current_price * (1 - TP_PERCENT)
     
     # Risk/Reward check
     risk = abs(current_price - sl)
