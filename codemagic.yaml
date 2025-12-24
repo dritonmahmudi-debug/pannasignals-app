@@ -18,7 +18,7 @@ workflows:
       vars:
         BUNDLE_ID: "com.panna.signalsApp"
         BUILD_NAME: "1.0.2"
-        BUILD_NUMBER: "3"
+        BUILD_NUMBER: "4"   # fallback (do të mbishkruhet automatikisht)
 
     scripts:
       - name: Verify bundle id in project (debug helper)
@@ -53,6 +53,11 @@ workflows:
           cd ios
           pod install
           cd ..
+
+      - name: Set unique build number (avoid duplicate uploads)
+        script: |
+          echo "BUILD_NUMBER=$(date +%Y%m%d%H%M)" >> $CM_ENV
+          echo "Using BUILD_NAME=$BUILD_NAME BUILD_NUMBER=$BUILD_NUMBER"
 
       - name: Build IPA (Release / App Store)
         script: |
@@ -98,7 +103,7 @@ workflows:
       vars:
         PACKAGE_NAME: "com.panna.signalsApp"
         BUILD_NAME: "1.0.2"
-        BUILD_NUMBER: "3"
+        BUILD_NUMBER: "4"
 
     scripts:
       - name: Set up key.properties
