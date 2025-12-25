@@ -2,7 +2,7 @@ name: panna_signals
 description: "Panna Signals – Simple, clear Forex & Crypto signals."
 publish_to: 'none'
 
-version: 1.0.2+3
+version: 1.0.2+202512252220
 
 environment:
   sdk: ^3.10.3
