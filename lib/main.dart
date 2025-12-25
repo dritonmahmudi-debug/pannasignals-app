@@ -387,28 +387,29 @@ class PremiumManager extends ChangeNotifier {
   }
 
   Future<void> checkPremiumFromBackend() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user?.email == null) {
-        _isPremium = false;
-        notifyListeners();
-        return;
-      }
-
-      final response = await http.get(
-        Uri.parse('$kApiBaseUrl/premium/check/${user!.email}'),
-      );
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        _isPremium = data['is_premium'] ?? false;
-        debugPrint('✅ Premium status from backend: $_isPremium (${user.email})');
-        notifyListeners();
-      }
-    } catch (e) {
-      debugPrint('❌ Error checking premium status: $e');
+  try {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user?.email == null) {
+      _isPremium = false;
+      notifyListeners();
+      return;
     }
+
+    final response = await http
+        .get(Uri.parse('$kApiBaseUrl/premium/check/${user!.email}'))
+        .timeout(const Duration(seconds: 10));
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      _isPremium = data['is_premium'] ?? false;
+      notifyListeners();
+    }
+  } catch (e) {
+    debugPrint('❌ Error checking premium status: $e');
+    // mos e blloko app-in
   }
+}
+
 
   Future<void> _restorePurchases() async {
     try {
@@ -1986,37 +1987,32 @@ class HistoryScreenState extends State<HistoryScreen> {
     _loadHistory();
   }
 
-  Future<void> _loadHistory() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
 
-    try {
-      final uri = Uri.parse('$kApiBaseUrl/signals?status=closed&limit=200');
-      final resp = await http.get(uri).timeout(
-        const Duration(seconds: 15),
-        onTimeout: () {
-          throw Exception('Request timeout - Kontrolloni lidhjen');
-        },
-      );
+  await runZonedGuarded(() async {
+    await Firebase.initializeApp();
 
-      if (resp.statusCode != 200) throw Exception('HTTP ${resp.statusCode}: ${resp.body}');
+    FlutterError.onError = (details) {
+      FlutterError.presentError(details);
+      FirebaseCrashlytics.instance.recordFlutterError(details);
+    };
 
-      final List<dynamic> data = jsonDecode(resp.body);
-      var signals = data.map((e) => Signal.fromJson(e)).toList();
-      signals = signals.where((s) => s.isClosed).toList();
-      signals.sort((a, b) => b.time.compareTo(a.time));
+    await FirebaseCrashlytics.instance
+        .setCrashlyticsCollectionEnabled(!kDebugMode);
 
-      favoritesManager.updateSignals(signals);
+    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
-      setState(() => _history = signals);
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      setState(() => _loading = false);
-    }
-  }
+    // ✅ STARTO UI MENJËHERË
+    runApp(const SignalApp());
+
+    // ✅ init premium në background (mos e blloko launch)
+    unawaited(premiumManager.initialize());
+  }, (error, stack) {
+    FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+  });
+}
+
 
   void _openDetails(Signal signal) {
     showModalBottomSheet(
