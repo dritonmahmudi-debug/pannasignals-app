@@ -409,13 +409,12 @@ class PremiumManager extends ChangeNotifier {
   Future<void> checkPremiumFromBackend() async {
   try {
     final user = FirebaseAuth.instance.currentUser;
-    if (user?.email == null) {
-      _isPremium = false;
-      notifyListeners();
+    
+    final emailRaw = user?.email; // String?
+    if (emailRaw == null || emailRaw.isEmpty) {
       return;
     }
-
-    final email = Uri.encodeComponent(user.email!);
+    final email = Uri.encodeComponent(emailRaw);
     final response = await http
         .get(Uri.parse('$kApiBaseUrl/premium/check/$email'))
         .timeout(const Duration(seconds: 10));
@@ -496,11 +495,11 @@ class SignalApp extends StatelessWidget {
           secondary: Colors.amberAccent,
         ),
         scaffoldBackgroundColor: const Color(0xFF05070A),
-        cardTheme: const CardTheme(
+        cardTheme: const CardThemeData(
           elevation: 2,
-          margin: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          margin: EdgeInsets.all(12),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(14)),
+            borderRadius: BorderRadius.all(Radius.circular(16)),
           ),
         ),
         appBarTheme: const AppBarTheme(
