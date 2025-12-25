@@ -18,7 +18,7 @@ workflows:
       vars:
         BUNDLE_ID: "com.panna.signalsApp"
         BUILD_NAME: "1.0.2"
-        BUILD_NUMBER: "4"   # fallback (do të mbishkruhet automatikisht)
+        BUILD_NUMBER: "4" # fallback (do të mbishkruhet automatikisht)
 
     scripts:
       - name: Verify bundle id in project (debug helper)
@@ -32,12 +32,12 @@ workflows:
         script: |
           keychain initialize
 
-          app-store-connect fetch-signing-files $BUNDLE_ID \
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
             --create \
             --type IOS_APP_STORE \
             --platform IOS \
-            --issuer-id $APP_STORE_CONNECT_ISSUER_ID \
-            --key-id $APP_STORE_CONNECT_KEY_IDENTIFIER \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
             --private-key @env:APP_STORE_CONNECT_PRIVATE_KEY \
             --certificate-key @env:CERTIFICATE_PRIVATE_KEY
 
@@ -56,16 +56,52 @@ workflows:
 
       - name: Set unique build number (avoid duplicate uploads)
         script: |
-          echo "BUILD_NUMBER=$(date +%Y%m%d%H%M)" >> $CM_ENV
+          BUILD_NUMBER=$(date +%Y%m%d%H%M)
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$CM_ENV"
           echo "Using BUILD_NAME=$BUILD_NAME BUILD_NUMBER=$BUILD_NUMBER"
 
-      - name: Build IPA (Release / App Store)
+      - name: Set version in pubspec.yaml
+        script: |
+          python3 - << 'PY'
+          import re, pathlib, os
+          p = pathlib.Path("pubspec.yaml")
+          txt = p.read_text(encoding="utf-8")
+          build_name = os.environ.get("BUILD_NAME", "1.0.2")
+          build_number = os.environ.get("BUILD_NUMBER", "4")
+          txt2 = re.sub(r'^version:\s*.*$', f'version: {build_name}+{build_number}', txt, flags=re.M)
+          p.write_text(txt2, encoding="utf-8")
+          print("✅ pubspec.yaml version set to:", f"{build_name}+{build_number}")
+          PY
+          grep -n "^version:" pubspec.yaml || true
+
+      - name: Create export_options.plist
+        script: |
+          cat > export_options.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>uploadBitcode</key>
+            <false/>
+            <key>compileBitcode</key>
+            <false/>
+            <key>stripSwiftSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+          echo "✅ export_options.plist created:"
+          ls -la export_options.plist
+
+      - name: Build IPA (App Store)
         script: |
           flutter clean
-          flutter build ipa --release \
-            --build-name=$BUILD_NAME \
-            --build-number=$BUILD_NUMBER \
-            --export-options-plist=/Users/builder/export_options.plist
+          flutter pub get
+          flutter build ipa --export-options-plist=export_options.plist
 
     artifacts:
       - build/ios/ipa/*.ipa
