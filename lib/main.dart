@@ -20,6 +20,13 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 
+// Robust double parsing helper
+double _asDouble(dynamic v) {
+  if (v == null) return 0.0;
+  if (v is num) return v.toDouble();
+  return double.tryParse(v.toString()) ?? 0.0;
+}
+
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp();
@@ -45,7 +52,7 @@ Future<void> main() async {
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
     // Initialize premium/billing manager
-    await premiumManager.initialize();
+    unawaited(premiumManager.initialize());
 
     runApp(const SignalApp());
   }, (error, stack) {
@@ -62,13 +69,17 @@ const String kApiBaseUrl = String.fromEnvironment(
 /// ✅ Këto duhen për Play Console (Privacy URL) + Share
 const String kPrivacyUrlOnline = String.fromEnvironment(
   'PRIVACY_URL',
-  defaultValue: 'https://YOUR_DOMAIN/privacy',
+  defaultValue: 'https://pannasignals.com/privacy.html',
 );
 
 const String kStoreUrl = String.fromEnvironment(
   'STORE_URL',
-  defaultValue: 'https://play.google.com/store/apps/details?id=YOUR_APP_ID',
+  defaultValue: 'https://play.google.com/store/apps/details?id=com.panna.signalsApp',
 );
+
+/// Centralized admin/support email
+const String kAdminEmail = 'official@pannasignals.com';
+const String kPrivacyContactEmail = 'privacy@pannasignals.com';
 
 // ======================= ENUMS & EXTENSIONS =======================
 
@@ -222,24 +233,9 @@ class Signal {
             DateTime.now().toIso8601String())
         .toString();
 
-    // Parse time - backend sends UTC time
+    // Parse time - backend sends UTC time (ISO8601)
     DateTime parsedTime = DateTime.tryParse(timeStr) ?? DateTime.now();
-    
-    // Convert UTC to local time (Europe/Belgrade = UTC+1 in winter, UTC+2 in summer)
-    // For now, manually add 1 hour since we're in winter (CET)
-    if (!parsedTime.isUtc) {
-      // If not marked as UTC, treat it as UTC anyway
-      parsedTime = DateTime.utc(
-        parsedTime.year,
-        parsedTime.month,
-        parsedTime.day,
-        parsedTime.hour,
-        parsedTime.minute,
-        parsedTime.second,
-      );
-    }
-    // Convert to local timezone
-    parsedTime = parsedTime.toLocal();
+    // Do NOT force UTC or local conversion, just use as-is (Flutter handles ISO8601 UTC correctly)
 
     // If analysis_type is missing or invalid, try to infer from source
     String? analysisType = json['analysis_type'];
@@ -252,9 +248,9 @@ class Signal {
       id: json['id'] ?? 0,
       symbol: json['symbol'] ?? '',
       direction: (json['direction'] ?? '').toString().toUpperCase(),
-      entry: (json['entry'] ?? 0).toDouble(),
-      tp: (json['tp'] ?? 0).toDouble(),
-      sl: (json['sl'] ?? 0).toDouble(),
+      entry: _asDouble(json['entry']),
+      tp: _asDouble(json['tp']),
+      sl: _asDouble(json['sl']),
       timeframe: json['timeframe'] ?? '',
       time: parsedTime,
       source: json['source'],
@@ -262,7 +258,7 @@ class Signal {
       status: json['status'] ?? 'open',
       hit: json['hit'],
       pnlPercent: json['pnl_percent'] != null
-          ? (json['pnl_percent'] as num).toDouble()
+          ? _asDouble(json['pnl_percent'])
           : null,
       extraText: json['extra_text'],
       isFavorite: false,
@@ -315,9 +311,9 @@ class StatsResponse {
       wins: json['wins'] ?? 0,
       losses: json['losses'] ?? 0,
       breakevens: json['breakevens'] ?? 0,
-      winRate: (json['win_rate'] ?? 0).toDouble(),
-      avgPnlPercent: (json['avg_pnl_percent'] ?? 0).toDouble(),
-      totalPnlPercent: (json['total_pnl_percent'] ?? 0).toDouble(),
+      winRate: _asDouble(json['win_rate']),
+      avgPnlPercent: _asDouble(json['avg_pnl_percent']),
+      totalPnlPercent: _asDouble(json['total_pnl_percent']),
     );
   }
 }
@@ -362,6 +358,11 @@ final favoritesManager = FavoritesManager();
 // ======================= PREMIUM MANAGER (GLOBAL) =======================
 
 class PremiumManager extends ChangeNotifier {
+    @override
+    void dispose() {
+      _purchaseSub?.cancel();
+      super.dispose();
+    }
   bool _isPremium = false;
   bool _isLoading = false;
   
@@ -371,10 +372,12 @@ class PremiumManager extends ChangeNotifier {
   bool get isPremium => _isPremium;
   bool get isLoading => _isLoading;
 
+  StreamSubscription<List<PurchaseDetails>>? _purchaseSub;
+
   Future<void> initialize() async {
     // Check premium status from backend first
     await checkPremiumFromBackend();
-    
+
     // Check if billing is available
     final available = await _iap.isAvailable();
     if (!available) {
@@ -382,7 +385,24 @@ class PremiumManager extends ChangeNotifier {
       return;
     }
 
-    // Check for existing purchases (restore)
+    // Listen to purchase updates
+    _purchaseSub = _iap.purchaseStream.listen((purchases) async {
+      for (final purchase in purchases) {
+        if (purchase.status == PurchaseStatus.purchased || purchase.status == PurchaseStatus.restored) {
+          // TODO: verify server-side (ideal)
+          await checkPremiumFromBackend();
+          if (purchase.pendingCompletePurchase) {
+            await _iap.completePurchase(purchase);
+          }
+        } else if (purchase.status == PurchaseStatus.error) {
+          debugPrint('❌ Purchase error: ${purchase.error}');
+        }
+      }
+    }, onError: (e) {
+      debugPrint('❌ Error in purchaseStream: $e');
+    });
+
+    // Restore purchases on init
     await _restorePurchases();
   }
 
@@ -395,8 +415,9 @@ class PremiumManager extends ChangeNotifier {
       return;
     }
 
+    final email = Uri.encodeComponent(user.email!);
     final response = await http
-        .get(Uri.parse('$kApiBaseUrl/premium/check/${user!.email}'))
+        .get(Uri.parse('$kApiBaseUrl/premium/check/$email'))
         .timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200) {
@@ -413,17 +434,7 @@ class PremiumManager extends ChangeNotifier {
 
   Future<void> _restorePurchases() async {
     try {
-      // Check existing purchases using purchaseStream or past purchases
-      final ProductDetailsResponse response = await _iap.queryProductDetails({premiumProductId});
-      
-      // Note: In production, you'd listen to purchaseStream and verify with your backend
-      // For now, we'll just check if the product is available
-      if (response.productDetails.isNotEmpty) {
-        debugPrint('✅ Premium product found: ${response.productDetails.first.id}');
-      }
-      
-      // TODO: Implement proper purchase verification with backend server
-      // For testing, premium status can be set manually or via successful purchase
+      await _iap.restorePurchases();
     } catch (e) {
       debugPrint('❌ Error restoring purchases: $e');
     }
@@ -432,27 +443,23 @@ class PremiumManager extends ChangeNotifier {
   Future<bool> purchasePremium() async {
     _isLoading = true;
     notifyListeners();
-
     try {
       // Get product details
       final response = await _iap.queryProductDetails({premiumProductId});
-      
       if (response.productDetails.isEmpty) {
         debugPrint('⚠️ Premium product not found in Play Console');
         _isLoading = false;
         notifyListeners();
         return false;
       }
-
       final product = response.productDetails.first;
       final purchaseParam = PurchaseParam(productDetails: product);
-      
-      // Start purchase flow
-      final success = await _iap.buyNonConsumable(purchaseParam: purchaseParam);
-      
+      // Start purchase flow (result handled by purchaseStream)
+      _iap.buyNonConsumable(purchaseParam: purchaseParam);
       _isLoading = false;
       notifyListeners();
-      return success;
+      // Do not return true immediately; premium status is set after backend verification
+      return true;
     } catch (e) {
       debugPrint('❌ Error purchasing premium: $e');
       _isLoading = false;
@@ -489,7 +496,7 @@ class SignalApp extends StatelessWidget {
           secondary: Colors.amberAccent,
         ),
         scaffoldBackgroundColor: const Color(0xFF05070A),
-        cardTheme: const CardThemeData(
+        cardTheme: const CardTheme(
           elevation: 2,
           margin: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           shape: RoundedRectangleBorder(
@@ -647,7 +654,7 @@ class _LoginScreenState extends State<LoginScreen> {
           // Dërgo verification email nga backend
           try {
             await http.post(
-              Uri.parse('https://pannasignals.com/api/auth/send_verification_email'),
+              Uri.parse(' kApiBaseUrl/auth/send_verification_email'),
               headers: {'Content-Type': 'application/json'},
               body: jsonEncode({'email': email}),
             );
@@ -687,7 +694,7 @@ class _LoginScreenState extends State<LoginScreen> {
         // Dërgo verification email nga backend (official@pannasignals.com)
         try {
           final response = await http.post(
-            Uri.parse('https://pannasignals.com/api/auth/send_verification_email'),
+            Uri.parse(' kApiBaseUrl/auth/send_verification_email'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'email': email}),
           );
@@ -894,28 +901,32 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
   bool _sending = false;
   bool _checking = false;
 
+  DateTime? _lastSent;
+  Timer? _cooldownTimer;
+  int _cooldownSeconds = 0;
+
   @override
   void initState() {
     super.initState();
-    _sendVerificationEmail();
+    // Do not send email automatically to avoid spam
   }
 
   Future<void> _sendVerificationEmail() async {
+    if (_cooldownSeconds > 0) return;
     setState(() => _sending = true);
     try {
-      // Dërgo verification email nga backend (official@pannasignals.com)
       final response = await http.post(
-        Uri.parse('https://pannasignals.com/api/auth/send_verification_email'),
+        Uri.parse('$kApiBaseUrl/auth/send_verification_email'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'email': widget.user.email}),
       );
-      
       if (!mounted) return;
-      
       if (response.statusCode == 200) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Verification email sent to ${widget.user.email}.')),
         );
+        _lastSent = DateTime.now();
+        _startCooldown();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Could not send verification email. Please try again.')),
@@ -929,6 +940,25 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  void _startCooldown() {
+    setState(() => _cooldownSeconds = 60);
+    _cooldownTimer?.cancel();
+    _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_cooldownSeconds <= 1) {
+        timer.cancel();
+        if (mounted) setState(() => _cooldownSeconds = 0);
+      } else {
+        if (mounted) setState(() => _cooldownSeconds--);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _cooldownTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _checkVerified() async {
@@ -1017,10 +1047,12 @@ class _EmailVerificationScreenState extends State<EmailVerificationScreen> {
                   ),
                   const SizedBox(height: 8),
                   TextButton(
-                    onPressed: _sending ? null : _sendVerificationEmail,
+                    onPressed: (_sending || _cooldownSeconds > 0) ? null : _sendVerificationEmail,
                     child: _sending
                         ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('Resend verification email'),
+                        : Text(_cooldownSeconds > 0
+                            ? 'Resend in ${_cooldownSeconds}s'
+                            : 'Resend verification email'),
                   ),
                   const SizedBox(height: 8),
                   TextButton(
@@ -1747,7 +1779,7 @@ class SignalDetailsSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final timeText = DateFormat('yyyy-MM-dd HH:mm (Europe/Belgrade)').format(signal.time);
+    final timeText = DateFormat('yyyy-MM-dd HH:mm').format(signal.time);
 
     String resultText = '';
     Color? resultColor;
@@ -1987,34 +2019,46 @@ class HistoryScreenState extends State<HistoryScreen> {
     _loadHistory();
   }
 
-  Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  await runZonedGuarded(() async {
-    await Firebase.initializeApp();
-
-    FlutterError.onError = (details) {
-      FlutterError.presentError(details);
-      FirebaseCrashlytics.instance.recordFlutterError(details);
-    };
-
-    await FirebaseCrashlytics.instance
-        .setCrashlyticsCollectionEnabled(!kDebugMode);
-
-    FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-
-    // ✅ STARTO UI MENJËHERË
-    runApp(const SignalApp());
-
-    // ✅ init premium në background (mos e blloko launch)
-    unawaited(premiumManager.initialize());
-  }, (error, stack) {
-    FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
-  });
-}
+  /// Loads closed signals from backend and updates _history
+  Future<void> _loadHistory() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final response = await http.get(Uri.parse('$kApiBaseUrl/signals/history')).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final List<dynamic> data = json.decode(response.body);
+        final List<Signal> signals = data.map((e) => Signal.fromJson(e)).toList();
+        setState(() {
+          _history = signals;
+          _loading = false;
+        });
+        favoritesManager.updateSignals(signals);
+      } else {
+        setState(() {
+          _error = 'Failed to load history (${response.statusCode})';
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _error = 'Error loading history: $e';
+        _loading = false;
+      });
+    }
+  }
 
 
   void _openDetails(Signal signal) {
+    final user = FirebaseAuth.instance.currentUser;
+    final isAdmin = user?.email?.toLowerCase() == 'driton.mahmudi@gmail.com';
+    if (!premiumManager.isPremium && !isAdmin) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Upgrade to Premium to view details.')),
+      );
+      return;
+    }
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF10131A),
@@ -2469,7 +2513,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _triggerTestCrash() {
-    // Record the test crash intent to Crashlytics before crashing
+       // Record the test crash intent to Crashlytics before crashing
     FirebaseCrashlytics.instance.log('🧪 User triggered test crash via admin button');
     
     // Throw an exception that Crashlytics will capture
@@ -2525,9 +2569,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           SwitchListTile(
             value: _pushEnabled,
-            onChanged: (v) {
+            onChanged: (v) async {
               setState(() => _pushEnabled = v);
-              // TODO: unsubscribe/subscribe logic later (topics)
+              await FirebaseMessaging.instance.setAutoInitEnabled(v);
             },
             title: const Text('Push notifications'),
             subtitle: const Text('Receive trade signal notifications'),
@@ -3042,7 +3086,7 @@ class AboutScreen extends StatelessWidget {
                     ListTile(
                       leading: const Icon(Icons.email_outlined, color: Colors.tealAccent),
                       title: const Text('Email Support'),
-                      subtitle: const Text('official@pannasignals.com'),
+                      subtitle: const Text(kAdminEmail),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: _sendEmail,
                     ),
@@ -3068,7 +3112,7 @@ class AboutScreen extends StatelessWidget {
                       leading: const Icon(Icons.privacy_tip_outlined),
                       title: const Text('Privacy Policy'),
                       trailing: const Icon(Icons.open_in_new, size: 18),
-                      onTap: () => _openUrl('https://pannasignals.com/privacy.html'),
+                      onTap: () => _openUrl(kPrivacyUrlOnline),
                     ),
                     const Divider(height: 0),
                     ListTile(
@@ -3123,7 +3167,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
           padding: const EdgeInsets.all(16.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: const [
+            children: [
               Text('Privacy Policy', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               SizedBox(height: 8),
               Text(
@@ -3199,7 +3243,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
               SizedBox(height: 8),
               Text(
                 'If you have any questions about this Privacy Policy, please contact us at:\n'
-                'privacy@pannasignals.com\n\n'
+                '$kPrivacyContactEmail\n\n'
                 'This text is a simple, generic privacy policy for an app that uses Firebase Auth and FCM. '
                 'For full legal compliance in your country, you may want to review it with a legal professional.',
               ),
