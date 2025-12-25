@@ -18,6 +18,14 @@ workflows:
       vars:
         BUNDLE_ID: "com.panna.signalsApp"
         BUILD_NAME: "1.0.2"
+      
+    - name: Debug env vars presence
+        script: |
+          echo "ISSUER_ID length: ${#APP_STORE_CONNECT_ISSUER_ID}"
+          echo "KEY_ID length: ${#APP_STORE_CONNECT_KEY_IDENTIFIER}"
+          if [ -z "$APP_STORE_CONNECT_PRIVATE_KEY" ]; then echo "PRIVATE_KEY missing"; else echo "PRIVATE_KEY OK"; fi
+          if [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY" ]; then echo "PUBLISHER_KEY missing"; else echo "PUBLISHER_KEY OK"; fi
+          if [ -z "$CERTIFICATE_PRIVATE_KEY" ]; then echo "CERTIFICATE_KEY missing"; else echo "CERTIFICATE_KEY OK"; fi
 
     scripts:
       - name: Set unique build number (avoid duplicate uploads)
