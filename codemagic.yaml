@@ -51,7 +51,12 @@ workflows:
         script: |
           echo "ISSUER_ID length: ${#APP_STORE_CONNECT_ISSUER_ID}"
           echo "KEY_ID length: ${#APP_STORE_CONNECT_KEY_IDENTIFIER}"
-          if [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY" ]; then echo "PUBLISHER_PRIVATE_KEY missing ❌"; else echo "PUBLISHER_PRIVATE_KEY OK ✅"; fi
+          if [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY" ]; then
+            echo "PUBLISHER_PRIVATE_KEY missing ❌"
+            exit 1
+          else
+            echo "PUBLISHER_PRIVATE_KEY OK ✅"
+          fi
 
       - name: Set unique build number (avoid duplicate uploads)
         script: |
@@ -63,6 +68,20 @@ workflows:
         script: |
           echo "BUILD_NAME=$BUILD_NAME"
           echo "BUILD_NUMBER=$BUILD_NUMBER"
+
+      - name: FORCE iOS Info.plist version + build number (bulletproof)
+        script: |
+          echo "Before (ios/Runner/Info.plist):"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ios/Runner/Info.plist || true
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" ios/Runner/Info.plist || true
+
+          echo "Forcing to BUILD_NAME=$BUILD_NAME BUILD_NUMBER=$BUILD_NUMBER"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $BUILD_NAME" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
+
+          echo "After (ios/Runner/Info.plist):"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" ios/Runner/Info.plist
 
       - name: Set up code signing settings on Xcode project
         script: xcode-project use-profiles --project ios/Runner.xcodeproj --archive-method app-store
@@ -82,6 +101,12 @@ workflows:
           flutter build ipa --release \
             --build-name="$BUILD_NAME" \
             --build-number="$BUILD_NUMBER"
+
+      - name: Proof: read versions from built archive
+        script: |
+          echo "Archive plist (build/ios/archive/Runner.xcarchive/Info.plist):"
+          /usr/libexec/PlistBuddy -c "Print :ApplicationProperties:CFBundleShortVersionString" build/ios/archive/Runner.xcarchive/Info.plist || true
+          /usr/libexec/PlistBuddy -c "Print :ApplicationProperties:CFBundleVersion" build/ios/archive/Runner.xcarchive/Info.plist || true
 
       - name: Verify IPA exists (proof)
         script: |
