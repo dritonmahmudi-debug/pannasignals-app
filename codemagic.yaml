@@ -8,6 +8,7 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
+
       groups:
         - panna
 
@@ -29,40 +30,67 @@ workflows:
           pod install
           cd ..
 
+      - name: Decode App Store Connect key (B64 -> AuthKey.p8)
+        script: |
+          echo "B64 length: ${#APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64}"
+          [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" ] && echo "B64 missing ❌" && exit 1
+
+          echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 --decode > AuthKey.p8
+          ls -la AuthKey.p8
+
+          grep -q "BEGIN PRIVATE KEY" AuthKey.p8 && echo "BEGIN OK ✅" || (echo "BEGIN missing ❌" && exit 1)
+          grep -q "END PRIVATE KEY" AuthKey.p8 && echo "END OK ✅" || (echo "END missing ❌" && exit 1)
+
+      - name: Export App Store Connect private key for publishing
+        script: |
+          export APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY="$(cat AuthKey.p8)"
+          echo "PRIVATE_KEY length: ${#APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY}"
+          echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY" | grep -q "BEGIN PRIVATE KEY" && echo "BEGIN OK ✅" || (echo "BEGIN missing ❌" && exit 1)
+
       - name: Debug env vars presence (Codemagic)
         script: |
-         echo "ISSUER_ID length: ${#APP_STORE_CONNECT_ISSUER_ID}"
-         echo "KEY_ID length: ${#APP_STORE_CONNECT_KEY_IDENTIFIER}"
-         if [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY" ]; then echo "PUBLISHER_PRIVATE_KEY missing"; else echo "PUBLISHER_PRIVATE_KEY OK"; fi
+          echo "ISSUER_ID length: ${#APP_STORE_CONNECT_ISSUER_ID}"
+          echo "KEY_ID length: ${#APP_STORE_CONNECT_KEY_IDENTIFIER}"
+          if [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY" ]; then echo "PUBLISHER_PRIVATE_KEY missing ❌"; else echo "PUBLISHER_PRIVATE_KEY OK ✅"; fi
 
       - name: Set unique build number (avoid duplicate uploads)
         script: |
-          BUILD_NUMBER=$(date +%Y%m%d%H%M)
+          BUILD_NUMBER=$(date +%Y%m%d%H%M%S)
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$CM_ENV"
           echo "Using BUILD_NAME=$BUILD_NAME BUILD_NUMBER=$BUILD_NUMBER"
 
-      - name: Set version in pubspec.yaml
+      - name: Proof: print build vars
         script: |
-          python3 - << 'PY'
-          import re, pathlib, os
-          p = pathlib.Path("pubspec.yaml")
-          txt = p.read_text(encoding="utf-8")
-          build_name = os.environ.get("BUILD_NAME", "1.0.2")
-          build_number = os.environ.get("BUILD_NUMBER", "1")
-          txt2 = re.sub(r'^version:\s*.*$', f'version: {build_name}+{build_number}', txt, flags=re.M)
-          p.write_text(txt2, encoding="utf-8")
-          print("✅ pubspec.yaml version set to:", f"{build_name}+{build_number}")
-          PY
-          grep -n "^version:" pubspec.yaml || true
+          echo "BUILD_NAME=$BUILD_NAME"
+          echo "BUILD_NUMBER=$BUILD_NUMBER"
 
       - name: Set up code signing settings on Xcode project
         script: xcode-project use-profiles --project ios/Runner.xcodeproj --archive-method app-store
+
+      - name: Check installed signing identities
+        script: |
+          security find-identity -v -p codesigning || true
+
+      - name: Check installed provisioning profiles
+        script: |
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles" || true
 
       - name: Build IPA (App Store)
         script: |
           flutter clean
           flutter pub get
-          flutter build ipa --release
+          flutter build ipa --release \
+            --build-name="$BUILD_NAME" \
+            --build-number="$BUILD_NUMBER"
+
+      - name: Verify IPA exists (proof)
+        script: |
+          echo "=== IPA folder ==="
+          ls -la build/ios/ipa || true
+          echo "=== IPA files ==="
+          ls -la build/ios/ipa/*.ipa || true
+          echo "=== IPA count (expected >= 1) ==="
+          ls -1 build/ios/ipa/*.ipa 2>/dev/null | wc -l | tr -d ' '
 
     artifacts:
       - build/ios/ipa/*.ipa
@@ -70,9 +98,9 @@ workflows:
 
     publishing:
       app_store_connect:
-        api_key: $APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        private_key: $APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY
         submit_to_testflight: true
 
 
