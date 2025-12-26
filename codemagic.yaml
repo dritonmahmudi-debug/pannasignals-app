@@ -18,56 +18,10 @@ workflows:
       vars:
         BUNDLE_ID: "com.panna.signalsApp"
         BUILD_NAME: "1.0.2"
-      
-    - name: Debug env vars presence
-        script: |
-          echo "ISSUER_ID length: ${#APP_STORE_CONNECT_ISSUER_ID}"
-          echo "KEY_ID length: ${#APP_STORE_CONNECT_KEY_IDENTIFIER}"
-          if [ -z "$APP_STORE_CONNECT_PRIVATE_KEY" ]; then echo "PRIVATE_KEY missing"; else echo "PRIVATE_KEY OK"; fi
-          if [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY" ]; then echo "PUBLISHER_KEY missing"; else echo "PUBLISHER_KEY OK"; fi
-          if [ -z "$CERTIFICATE_PRIVATE_KEY" ]; then echo "CERTIFICATE_KEY missing"; else echo "CERTIFICATE_KEY OK"; fi
 
     scripts:
-      - name: Set unique build number (avoid duplicate uploads)
-        script: |
-          BUILD_NUMBER=$(date +%Y%m%d%H%M%S)
-          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$CM_ENV"
-          echo "Using BUILD_NAME=$BUILD_NAME BUILD_NUMBER=$BUILD_NUMBER"
-
-      - name: Verify bundle id in project (debug helper)
-        script: |
-          echo "=== PRODUCT_BUNDLE_IDENTIFIER (project.pbxproj) ==="
-          grep -n "PRODUCT_BUNDLE_IDENTIFIER" ios/Runner.xcodeproj/project.pbxproj | head -n 30
-          echo "=== Searching com.example in ios folder (should be empty) ==="
-          grep -R "com.example" -n ios | head -n 20 || true
-
-      - name: Fetch signing files (App Store) + apply profiles  ✅ FIXED
-        script: |
-          keychain initialize
-
-          # IMPORTANT: mos përdor --certificate-key këtu (shkakton mismatch / dev cert)
-          app-store-connect fetch-signing-files "$BUNDLE_ID" \
-            --create \
-            --type IOS_APP_STORE \
-            --platform IOS \
-            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key @env:APP_STORE_CONNECT_PRIVATE_KEY
-
-          keychain add-certificates
-
-          # Apliko profile në projekt për archive app-store
-          xcode-project use-profiles --project ios/Runner.xcodeproj --archive-method app-store
-
-          echo "=== Codesigning identities ==="
-          security find-identity -v -p codesigning | head -n 30 || true
-
-          echo "=== Provisioning Profiles ==="
-          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles" || true
-
       - name: Get Flutter packages
-        script: |
-          flutter pub get
+        script: flutter pub get
 
       - name: Install Pods
         script: |
@@ -75,56 +29,52 @@ workflows:
           pod install
           cd ..
 
-      - name: Create export_options.plist
+      - name: Debug env vars presence (Codemagic)
         script: |
-          cat > export_options.plist <<'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store</string>
-            <key>signingStyle</key>
-            <string>automatic</string>
-            <key>uploadBitcode</key>
-            <false/>
-            <key>compileBitcode</key>
-            <false/>
-            <key>stripSwiftSymbols</key>
-            <true/>
-          </dict>
-          </plist>
-          PLIST
-          ls -la export_options.plist
+         echo "ISSUER_ID length: ${#APP_STORE_CONNECT_ISSUER_ID}"
+         echo "KEY_ID length: ${#APP_STORE_CONNECT_KEY_IDENTIFIER}"
+         if [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY" ]; then echo "PUBLISHER_PRIVATE_KEY missing"; else echo "PUBLISHER_PRIVATE_KEY OK"; fi
+
+      - name: Set unique build number (avoid duplicate uploads)
+        script: |
+          BUILD_NUMBER=$(date +%Y%m%d%H%M)
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$CM_ENV"
+          echo "Using BUILD_NAME=$BUILD_NAME BUILD_NUMBER=$BUILD_NUMBER"
+
+      - name: Set version in pubspec.yaml
+        script: |
+          python3 - << 'PY'
+          import re, pathlib, os
+          p = pathlib.Path("pubspec.yaml")
+          txt = p.read_text(encoding="utf-8")
+          build_name = os.environ.get("BUILD_NAME", "1.0.2")
+          build_number = os.environ.get("BUILD_NUMBER", "1")
+          txt2 = re.sub(r'^version:\s*.*$', f'version: {build_name}+{build_number}', txt, flags=re.M)
+          p.write_text(txt2, encoding="utf-8")
+          print("✅ pubspec.yaml version set to:", f"{build_name}+{build_number}")
+          PY
+          grep -n "^version:" pubspec.yaml || true
+
+      - name: Set up code signing settings on Xcode project
+        script: xcode-project use-profiles --project ios/Runner.xcodeproj --archive-method app-store
 
       - name: Build IPA (App Store)
         script: |
           flutter clean
           flutter pub get
-          flutter build ipa --release \
-            --export-options-plist=export_options.plist \
-            --build-name="$BUILD_NAME" \
-            --build-number="$BUILD_NUMBER"
+          flutter build ipa --release
 
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
-      - flutter_drive.log
 
     publishing:
-      email:
-        recipients:
-          - driton.mahmudi@gmail.com
-        notify:
-          success: true
-          failure: true
-
       app_store_connect:
-        # përdor të njëjtin key që përdore edhe te fetch-signing-files
-        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        api_key: $APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY
         key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
         issuer_id: $APP_STORE_CONNECT_ISSUER_ID
         submit_to_testflight: true
+
 
   android-workflow:
     name: Android Workflow
