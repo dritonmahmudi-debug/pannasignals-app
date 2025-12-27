@@ -8,7 +8,6 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
-
       groups:
         - panna
 
@@ -20,11 +19,20 @@ workflows:
         BUILD_NAME: "1.0.2"
 
     scripts:
+      - name: Print repo + current pubspec version
+        script: |
+          set -e
+          echo "GIT:"
+          git rev-parse --short HEAD || true
+          echo "pubspec version:"
+          grep -n "^version:" pubspec.yaml || true
+
       - name: Get Flutter packages
         script: flutter pub get
 
       - name: Install Pods
         script: |
+          set -e
           cd ios
           pod install
           cd ..
@@ -34,10 +42,8 @@ workflows:
           set -e
           echo "B64 length: ${#APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64}"
           [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" ] && echo "B64 missing ❌" && exit 1
-
           echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 --decode > AuthKey.p8
           ls -la AuthKey.p8
-
           grep -q "BEGIN PRIVATE KEY" AuthKey.p8 && echo "BEGIN OK ✅" || (echo "BEGIN missing ❌" && exit 1)
           grep -q "END PRIVATE KEY" AuthKey.p8 && echo "END OK ✅" || (echo "END missing ❌" && exit 1)
 
@@ -51,7 +57,7 @@ workflows:
       - name: Set up code signing settings on Xcode project
         script: xcode-project use-profiles --project ios/Runner.xcodeproj --archive-method app-store
 
-      - name: Build IPA (unique build number)
+      - name: Build IPA (force unique build number) + Verify inside IPA
         script: |
           set -e
 
@@ -61,14 +67,28 @@ workflows:
           flutter clean
           flutter pub get
 
-          flutter build ipa \
-            --release \
-            --build-name="$BUILD_NAME" \
-            --build-number="$BUILD_NUMBER"
+          # IMPORTANT: one line, no "\" line breaks
+          flutter build ipa --release --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER"
 
-          echo "=== Archive Info.plist proof ==="
-          /usr/libexec/PlistBuddy -c "Print :ApplicationProperties:CFBundleShortVersionString" build/ios/archive/Runner.xcarchive/Info.plist || true
-          /usr/libexec/PlistBuddy -c "Print :ApplicationProperties:CFBundleVersion" build/ios/archive/Runner.xcarchive/Info.plist || true
+          echo "=== IPA proof (read CFBundleVersion from IPA) ==="
+          IPA_PATH="$(ls -1 build/ios/ipa/*.ipa | head -n 1)"
+          echo "IPA: $IPA_PATH"
+
+          TMP_DIR="$(mktemp -d)"
+          unzip -q "$IPA_PATH" -d "$TMP_DIR"
+          PLIST="$TMP_DIR/Payload/Runner.app/Info.plist"
+
+          echo "CFBundleShortVersionString:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
+          echo "CFBundleVersion:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
+
+          ACTUAL_BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST" | tr -d '\r')"
+          if [ "$ACTUAL_BUNDLE_VERSION" != "$BUILD_NUMBER" ]; then
+            echo "❌ Build number NOT applied! expected=$BUILD_NUMBER got=$ACTUAL_BUNDLE_VERSION"
+            exit 1
+          fi
+          echo "✅ Build number applied correctly: $ACTUAL_BUNDLE_VERSION"
 
       - name: Verify IPA exists
         script: |
