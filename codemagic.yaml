@@ -44,7 +44,11 @@ workflows:
           set -euo pipefail
           echo "B64 length: ${#APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64}"
           [ -z "${APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64:-}" ] && echo "B64 missing ❌" && exit 1
-          echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 --decode > AuthKey.p8
+
+          # Try both decode flags (different base64 versions)
+          (echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 --decode > AuthKey.p8) || \
+          (echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 -d > AuthKey.p8)
+
           ls -la AuthKey.p8
           grep -q "BEGIN PRIVATE KEY" AuthKey.p8 && echo "BEGIN OK ✅" || (echo "BEGIN missing ❌" && exit 1)
           grep -q "END PRIVATE KEY" AuthKey.p8 && echo "END OK ✅" || (echo "END missing ❌" && exit 1)
