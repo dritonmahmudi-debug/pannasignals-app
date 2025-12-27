@@ -38,38 +38,20 @@ workflows:
           cd ios
           pod install
           cd ..
-      
-      - name: Fetch App Store signing files (cert + profile)
-        script: |
-          set -euo pipefail
 
-          # Kjo krijon/shkarkon App Store cert + provisioning profile
-          app-store-connect fetch-signing-files com.panna.signalsApp \
-            --type IOS_APP_STORE \
-            --platform IOS \
-            --create \
-            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key @file:AuthKey.p8 \
-            --certificate-key @env:CERTIFICATE_KEY
-
-          echo "Profiles on machine:"
-          find "$HOME/Library/MobileDevice/Provisioning Profiles" -maxdepth 1 -type f | wc -l || true
-          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles" || true
-
-      - name: Decode App Store Connect key (B64 -> AuthKey.p8)
+      - name: Decode App Store Connect key (B64 -> $HOME/AuthKey.p8)
         script: |
           set -euo pipefail
           echo "B64 length: ${#APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64}"
           [ -z "${APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64:-}" ] && echo "B64 missing ❌" && exit 1
 
-          # Try both decode flags (different base64 versions)
-          (echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 --decode > AuthKey.p8) || \
-          (echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 -d > AuthKey.p8)
+          # Decode (compat: different base64 versions)
+          (echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 --decode > "$HOME/AuthKey.p8") || \
+          (echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 -d > "$HOME/AuthKey.p8")
 
-          ls -la AuthKey.p8
-          grep -q "BEGIN PRIVATE KEY" AuthKey.p8 && echo "BEGIN OK ✅" || (echo "BEGIN missing ❌" && exit 1)
-          grep -q "END PRIVATE KEY" AuthKey.p8 && echo "END OK ✅" || (echo "END missing ❌" && exit 1)
+          ls -la "$HOME/AuthKey.p8"
+          grep -q "BEGIN PRIVATE KEY" "$HOME/AuthKey.p8" && echo "BEGIN OK ✅" || (echo "BEGIN missing ❌" && exit 1)
+          grep -q "END PRIVATE KEY" "$HOME/AuthKey.p8" && echo "END OK ✅" || (echo "END missing ❌" && exit 1)
 
       - name: Force unique iOS build/version (AGVTOOL + plist + pubspec)
         script: |
@@ -81,14 +63,14 @@ workflows:
           echo "FORCING BUILD_NUMBER=$BUILD_NUMBER"
 
           # Persist BUILD_NUMBER for next steps
-          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $CM_ENV
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$CM_ENV"
 
-          # 1) pubspec.yaml version (so Flutter side is consistent)
+          # 1) pubspec.yaml version (Flutter side)
           perl -0777 -i -pe 's/^version:\s*.+$/version: '"$BUILD_NAME"'+'"$BUILD_NUMBER"'/m' pubspec.yaml
           echo "pubspec version now:"
           grep '^version:' pubspec.yaml || true
 
-          # 2) Xcode-native versioning (strongest)
+          # 2) Xcode-native versioning (strong)
           cd ios
           agvtool new-version -all "$BUILD_NUMBER"
           agvtool new-marketing-version "$BUILD_NAME"
@@ -104,17 +86,24 @@ workflows:
           echo "Info.plist now:"
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
-      
+
       - name: Fetch App Store signing files (cert + profile)
         script: |
           set -euo pipefail
+          ls -la "$HOME/AuthKey.p8"
+
           app-store-connect fetch-signing-files com.panna.signalsApp \
             --type IOS_APP_STORE \
             --platform IOS \
             --create \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key @file:AuthKey.p8
+            --private-key @file:$HOME/AuthKey.p8 \
+            --certificate-key @env:CERTIFICATE_KEY
+
+          echo "Profiles on machine:"
+          find "$HOME/Library/MobileDevice/Provisioning Profiles" -maxdepth 1 -type f | wc -l || true
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles" || true
 
       - name: Set up code signing settings on Xcode project
         script: |
@@ -139,11 +128,6 @@ workflows:
           ls -la build/ios/ipa || true
           ls -la build/ios/ipa/*.ipa || true
 
-      - name: PROVE YAML IS USED
-        script: |
-          echo "### YAML IS ACTIVE (PROVE) ###"
-          exit 1
-
       - name: Upload IPA to App Store Connect (TestFlight)
         script: |
           set -euo pipefail
@@ -155,7 +139,7 @@ workflows:
             --path "$IPA_PATH" \
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --private-key @file:AuthKey.p8
+            --private-key @file:$HOME/AuthKey.p8
 
     artifacts:
       - build/ios/ipa/*.ipa
