@@ -17,7 +17,6 @@ workflows:
         bundle_identifier: com.panna.signalsApp
 
       vars:
-        BUNDLE_ID: "com.panna.signalsApp"
         BUILD_NAME: "1.0.2"
 
     scripts:
@@ -32,6 +31,7 @@ workflows:
 
       - name: Decode App Store Connect key (B64 -> AuthKey.p8)
         script: |
+          set -e
           echo "B64 length: ${#APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64}"
           [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" ] && echo "B64 missing ❌" && exit 1
 
@@ -43,79 +43,37 @@ workflows:
 
       - name: Export App Store Connect private key for publishing
         script: |
+          set -e
           export APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY="$(cat AuthKey.p8)"
           echo "PRIVATE_KEY length: ${#APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY}"
           echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY" | grep -q "BEGIN PRIVATE KEY" && echo "BEGIN OK ✅" || (echo "BEGIN missing ❌" && exit 1)
 
-      - name: Debug env vars presence (Codemagic)
-        script: |
-          echo "ISSUER_ID length: ${#APP_STORE_CONNECT_ISSUER_ID}"
-          echo "KEY_ID length: ${#APP_STORE_CONNECT_KEY_IDENTIFIER}"
-          if [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY" ]; then
-            echo "PUBLISHER_PRIVATE_KEY missing ❌"
-            exit 1
-          else
-            echo "PUBLISHER_PRIVATE_KEY OK ✅"
-          fi
-
-      - name: Set unique build number (avoid duplicate uploads)
-        script: |
-          BUILD_NUMBER=$(date +%Y%m%d%H%M%S)
-          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$CM_ENV"
-          echo "Using BUILD_NAME=$BUILD_NAME BUILD_NUMBER=$BUILD_NUMBER"
-
-      - name: Proof: print build vars
-        script: |
-          echo "BUILD_NAME=$BUILD_NAME"
-          echo "BUILD_NUMBER=$BUILD_NUMBER"
-
-      - name: FORCE iOS Info.plist version + build number (bulletproof)
-        script: |
-          echo "Before (ios/Runner/Info.plist):"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ios/Runner/Info.plist || true
-          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" ios/Runner/Info.plist || true
-
-          echo "Forcing to BUILD_NAME=$BUILD_NAME BUILD_NUMBER=$BUILD_NUMBER"
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $BUILD_NAME" ios/Runner/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" ios/Runner/Info.plist
-
-          echo "After (ios/Runner/Info.plist):"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ios/Runner/Info.plist
-          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" ios/Runner/Info.plist
-
       - name: Set up code signing settings on Xcode project
         script: xcode-project use-profiles --project ios/Runner.xcodeproj --archive-method app-store
 
-      - name: Check installed signing identities
+      - name: Build IPA (unique build number)
         script: |
-          security find-identity -v -p codesigning || true
+          set -e
 
-      - name: Check installed provisioning profiles
-        script: |
-          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles" || true
+          BUILD_NUMBER="$(date +%Y%m%d%H%M%S)"
+          echo "Using BUILD_NAME=$BUILD_NAME BUILD_NUMBER=$BUILD_NUMBER"
 
-      - name: Build IPA (App Store)
-        script: |
           flutter clean
           flutter pub get
-          flutter build ipa --release \
+
+          flutter build ipa \
+            --release \
             --build-name="$BUILD_NAME" \
             --build-number="$BUILD_NUMBER"
 
-      - name: Proof: read versions from built archive
-        script: |
-          echo "Archive plist (build/ios/archive/Runner.xcarchive/Info.plist):"
+          echo "=== Archive Info.plist proof ==="
           /usr/libexec/PlistBuddy -c "Print :ApplicationProperties:CFBundleShortVersionString" build/ios/archive/Runner.xcarchive/Info.plist || true
           /usr/libexec/PlistBuddy -c "Print :ApplicationProperties:CFBundleVersion" build/ios/archive/Runner.xcarchive/Info.plist || true
 
-      - name: Verify IPA exists (proof)
+      - name: Verify IPA exists
         script: |
-          echo "=== IPA folder ==="
           ls -la build/ios/ipa || true
-          echo "=== IPA files ==="
           ls -la build/ios/ipa/*.ipa || true
-          echo "=== IPA count (expected >= 1) ==="
-          ls -1 build/ios/ipa/*.ipa 2>/dev/null | wc -l | tr -d ' '
 
     artifacts:
       - build/ios/ipa/*.ipa
