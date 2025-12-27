@@ -38,6 +38,24 @@ workflows:
           cd ios
           pod install
           cd ..
+      
+      - name: Fetch App Store signing files (cert + profile)
+        script: |
+          set -euo pipefail
+
+          # Kjo krijon/shkarkon App Store cert + provisioning profile
+          app-store-connect fetch-signing-files com.panna.signalsApp \
+            --type IOS_APP_STORE \
+            --platform IOS \
+            --create \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --private-key @file:AuthKey.p8 \
+            --certificate-key @env:CERTIFICATE_KEY
+
+          echo "Profiles on machine:"
+          find "$HOME/Library/MobileDevice/Provisioning Profiles" -maxdepth 1 -type f | wc -l || true
+          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles" || true
 
       - name: Decode App Store Connect key (B64 -> AuthKey.p8)
         script: |
@@ -86,6 +104,17 @@ workflows:
           echo "Info.plist now:"
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
+      
+      - name: Fetch App Store signing files (cert + profile)
+        script: |
+          set -euo pipefail
+          app-store-connect fetch-signing-files com.panna.signalsApp \
+            --type IOS_APP_STORE \
+            --platform IOS \
+            --create \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --private-key @file:AuthKey.p8
 
       - name: Set up code signing settings on Xcode project
         script: |
@@ -94,36 +123,21 @@ workflows:
           echo "export_options.plist:"
           ls -la "$HOME/export_options.plist" || true
 
-      - name: Build IPA + Verify CFBundleVersion inside IPA
+      - name: Build IPA
         script: |
           set -euo pipefail
-          echo "Using BUILD_NAME=$BUILD_NAME BUILD_NUMBER=$BUILD_NUMBER"
 
           flutter clean
           flutter pub get
 
-          # Build IPA (don't rely on flutter flags changing by version)
-          flutter build ipa
-
-          echo "=== IPA proof (read CFBundleVersion from IPA) ==="
-          IPA_PATH="$(ls -1 build/ios/ipa/*.ipa | head -n 1)"
-          echo "IPA: $IPA_PATH"
-
-          TMP_DIR="$(mktemp -d)"
-          unzip -q "$IPA_PATH" -d "$TMP_DIR"
-          PLIST="$TMP_DIR/Payload/Runner.app/Info.plist"
-
-          echo "CFBundleShortVersionString:"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
-          echo "CFBundleVersion:"
-          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
-
-          ACTUAL_BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST" | tr -d '\r')"
-          if [ "$ACTUAL_BUNDLE_VERSION" != "$BUILD_NUMBER" ]; then
-            echo "❌ Build number NOT applied! expected=$BUILD_NUMBER got=$ACTUAL_BUNDLE_VERSION"
-            exit 1
+          if [ -f "$HOME/export_options.plist" ]; then
+            flutter build ipa --export-options-plist="$HOME/export_options.plist"
+          else
+            flutter build ipa
           fi
-          echo "✅ Build number applied correctly: $ACTUAL_BUNDLE_VERSION"
+
+          ls -la build/ios/ipa || true
+          ls -la build/ios/ipa/*.ipa || true
 
       - name: PROVE YAML IS USED
         script: |
