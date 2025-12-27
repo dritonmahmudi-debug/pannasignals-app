@@ -121,6 +121,11 @@ workflows:
           fi
           echo "✅ Build number applied correctly: $ACTUAL_BUNDLE_VERSION"
 
+      - name: PROVE YAML IS USED
+        script: |
+          echo "### YAML IS ACTIVE (PROVE) ###"
+          exit 1
+
       - name: Upload IPA to App Store Connect (TestFlight)
         script: |
           set -euo pipefail
