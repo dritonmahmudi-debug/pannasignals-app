@@ -1,6 +1,6 @@
 workflows:
   ios-workflow:
-    name: iOS -> TestFlight
+    name: iOS -> TestFlight (unique build number)
     max_build_duration: 60
     instance_type: mac_mini_m1
 
@@ -21,54 +21,85 @@ workflows:
     scripts:
       - name: Print repo + current pubspec version
         script: |
-          set -e
+          set -euo pipefail
           echo "GIT:"
           git rev-parse --short HEAD || true
           echo "pubspec version:"
           grep -n "^version:" pubspec.yaml || true
 
       - name: Get Flutter packages
-        script: flutter pub get
+        script: |
+          set -euo pipefail
+          flutter pub get
 
       - name: Install Pods
         script: |
-          set -e
+          set -euo pipefail
           cd ios
           pod install
           cd ..
 
       - name: Decode App Store Connect key (B64 -> AuthKey.p8)
         script: |
-          set -e
+          set -euo pipefail
           echo "B64 length: ${#APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64}"
-          [ -z "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" ] && echo "B64 missing ❌" && exit 1
+          [ -z "${APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64:-}" ] && echo "B64 missing ❌" && exit 1
           echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 --decode > AuthKey.p8
           ls -la AuthKey.p8
           grep -q "BEGIN PRIVATE KEY" AuthKey.p8 && echo "BEGIN OK ✅" || (echo "BEGIN missing ❌" && exit 1)
           grep -q "END PRIVATE KEY" AuthKey.p8 && echo "END OK ✅" || (echo "END missing ❌" && exit 1)
 
-      - name: Export App Store Connect private key for publishing
+      - name: Force unique iOS build/version (AGVTOOL + plist + pubspec)
         script: |
-          set -e
-          export APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY="$(cat AuthKey.p8)"
-          echo "PRIVATE_KEY length: ${#APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY}"
-          echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY" | grep -q "BEGIN PRIVATE KEY" && echo "BEGIN OK ✅" || (echo "BEGIN missing ❌" && exit 1)
+          set -euo pipefail
+
+          # Always-unique build number (UTC): YYYYMMDDHHMMSS
+          BUILD_NUMBER="$(date -u +%Y%m%d%H%M%S)"
+          echo "FORCING BUILD_NAME=$BUILD_NAME"
+          echo "FORCING BUILD_NUMBER=$BUILD_NUMBER"
+
+          # Persist BUILD_NUMBER for next steps
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $CM_ENV
+
+          # 1) pubspec.yaml version (so Flutter side is consistent)
+          perl -0777 -i -pe 's/^version:\s*.+$/version: '"$BUILD_NAME"'+'"$BUILD_NUMBER"'/m' pubspec.yaml
+          echo "pubspec version now:"
+          grep '^version:' pubspec.yaml || true
+
+          # 2) Xcode-native versioning (strongest)
+          cd ios
+          agvtool new-version -all "$BUILD_NUMBER"
+          agvtool new-marketing-version "$BUILD_NAME"
+          cd ..
+
+          # 3) Info.plist (extra safety)
+          PLIST="ios/Runner/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $BUILD_NAME" "$PLIST" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $BUILD_NAME" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$PLIST" 2>/dev/null \
+            || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $BUILD_NUMBER" "$PLIST"
+
+          echo "Info.plist now:"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
 
       - name: Set up code signing settings on Xcode project
-        script: xcode-project use-profiles --project ios/Runner.xcodeproj --archive-method app-store
-
-      - name: Build IPA (force unique build number) + Verify inside IPA
         script: |
-          set -e
+          set -euo pipefail
+          xcode-project use-profiles --project ios/Runner.xcodeproj --archive-method app-store
+          echo "export_options.plist:"
+          ls -la "$HOME/export_options.plist" || true
 
-          BUILD_NUMBER="$(date +%Y%m%d%H%M%S)"
+      - name: Build IPA + Verify CFBundleVersion inside IPA
+        script: |
+          set -euo pipefail
           echo "Using BUILD_NAME=$BUILD_NAME BUILD_NUMBER=$BUILD_NUMBER"
 
           flutter clean
           flutter pub get
 
-          # IMPORTANT: one line, no "\" line breaks
-          flutter build ipa --release --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER"
+          # Build IPA (don't rely on flutter flags changing by version)
+          flutter build ipa
 
           echo "=== IPA proof (read CFBundleVersion from IPA) ==="
           IPA_PATH="$(ls -1 build/ios/ipa/*.ipa | head -n 1)"
@@ -90,21 +121,22 @@ workflows:
           fi
           echo "✅ Build number applied correctly: $ACTUAL_BUNDLE_VERSION"
 
-      - name: Verify IPA exists
+      - name: Upload IPA to App Store Connect (TestFlight)
         script: |
-          ls -la build/ios/ipa || true
-          ls -la build/ios/ipa/*.ipa || true
+          set -euo pipefail
+
+          IPA_PATH="$(ls -1 build/ios/ipa/*.ipa | head -n 1)"
+          echo "Uploading: $IPA_PATH"
+
+          app-store-connect publish \
+            --path "$IPA_PATH" \
+            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
+            --private-key @file:AuthKey.p8
 
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
-
-    publishing:
-      app_store_connect:
-        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
-        private_key: $APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY
-        submit_to_testflight: true
 
 
   android-workflow:
