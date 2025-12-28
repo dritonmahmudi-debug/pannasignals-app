@@ -15,10 +15,22 @@ workflows:
         distribution_type: app_store
         bundle_identifier: com.panna.signalsApp
 
+      CERTIFICATE_KEY: AppleDistribution.p12
       vars:
         BUILD_NAME: "1.0.2"
 
     scripts:
+      - name: Dekodo .p12 nga base64
+        script: |
+          echo $P12_BASE64 | base64 --decode > AppleDistribution.p12
+
+      - name: Importo certifikatën në keychain
+        script: |
+          security create-keychain -p "" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security import AppleDistribution.p12 -k build.keychain -P "$CERTIFICATE_KEY_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
       - name: Print repo + current pubspec version
         script: |
           set -euo pipefail
@@ -87,23 +99,6 @@ workflows:
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
 
-      - name: Fetch App Store signing files (cert + profile)
-        script: |
-          set -euo pipefail
-          ls -la "$HOME/AuthKey.p8"
-
-          app-store-connect fetch-signing-files com.panna.signalsApp \
-            --type IOS_APP_STORE \
-            --platform IOS \
-            --create \
-            --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
-            --private-key @file:$HOME/AuthKey.p8 \
-            --certificate-key @env:CERTIFICATE_KEY
-
-          echo "Profiles on machine:"
-          find "$HOME/Library/MobileDevice/Provisioning Profiles" -maxdepth 1 -type f | wc -l || true
-          ls -la "$HOME/Library/MobileDevice/Provisioning Profiles" || true
 
       - name: Set up code signing settings on Xcode project
         script: |
