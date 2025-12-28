@@ -19,53 +19,39 @@ workflows:
         BUILD_NAME: "1.0.2"
 
     scripts:
-      - name: Prepare + Importo certifikatën (.p12) në keychain (robust)
+      - name: Prepare + Importo certifikatën (.p12) në keychain (fixed)
         script: |
           set -euo pipefail
+          export LANG=en_US.UTF-8
 
-          # --- Read envs (kept your names) ---
-          P12_B64="${P12_BASE64:-}"
-          P12_PASSWORD="${CERTIFICATE_KEY_PASSWORD:-}"
+          # Trim CR/LF (shpesh shkakton MAC verification failed)
+          P12_B64="$(printf %s "${P12_BASE64:-}" | tr -d '\r\n')"
+          P12_PASSWORD="$(printf %s "${CERTIFICATE_KEY_PASSWORD:-}" | tr -d '\r\n')"
 
           echo "P12_BASE64 length: ${#P12_B64}"
           echo "CERTIFICATE_KEY_PASSWORD length: ${#P12_PASSWORD}"
 
-          if [ -z "$P12_B64" ]; then
-            echo "❌ P12_BASE64 mungon (s’po vjen nga group 'panna')."
-            exit 1
-          fi
+          [ -z "$P12_B64" ] && echo "❌ P12_BASE64 mungon" && exit 1
 
-          # --- Decode base64 -> AppleDistribution.p12 (macOS-compatible) ---
           rm -f AppleDistribution.p12
 
-          if printf "%s" "$P12_B64" | base64 -D > AppleDistribution.p12 2>/dev/null; then
-            echo "Decoded with base64 -D ✅"
-          elif printf "%s" "$P12_B64" | base64 -d > AppleDistribution.p12 2>/dev/null; then
-            echo "Decoded with base64 -d ✅"
-          else
-            printf "%s" "$P12_B64" | base64 --decode > AppleDistribution.p12
-            echo "Decoded with base64 --decode ✅"
-          fi
+          # Decode (macOS)
+          (printf "%s" "$P12_B64" | base64 -D > AppleDistribution.p12 2>/dev/null) || \
+          (printf "%s" "$P12_B64" | base64 -d > AppleDistribution.p12 2>/dev/null) || \
+          (printf "%s" "$P12_B64" | base64 --decode > AppleDistribution.p12)
 
-          if [ ! -s AppleDistribution.p12 ]; then
-            echo "❌ AppleDistribution.p12 doli bosh / decode dështoi."
-            exit 1
-          fi
+          [ ! -s AppleDistribution.p12 ] && echo "❌ AppleDistribution.p12 doli bosh" && exit 1
 
-          # --- Validate p12 password BEFORE import ---
-          # (nëse dështon këtu -> password gabim ose p12 korrupt)
-          openssl pkcs12 -info -in AppleDistribution.p12 -noout -passin pass:"$P12_PASSWORD" >/dev/null
-          echo "P12 password OK ✅"
+          # Validate P12 (nëse këtu OK, file+password janë OK)
+          openssl pkcs12 -in AppleDistribution.p12 -noout -passin pass:"$P12_PASSWORD" >/dev/null
+          echo "P12 validate OK ✅"
 
-          # --- Create + import into keychain ---
-          security create-keychain -p "" build.keychain
-          security default-keychain -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          security set-keychain-settings -lut 21600 build.keychain
+          # Use Codemagic keychain tool (më stabile se security import)
+          pip3 install --user --upgrade codemagic-cli-tools
+          export PATH="$(python3 -m site --user-base)/bin:$PATH"
 
-          security import AppleDistribution.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
-
+          keychain initialize
+          keychain add-certificates --certificate AppleDistribution.p12 --certificate-password "$P12_PASSWORD"
           echo "Keychain import OK ✅"
 
       - name: Print repo + current pubspec version
