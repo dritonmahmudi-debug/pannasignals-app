@@ -19,17 +19,55 @@ workflows:
         BUILD_NAME: "1.0.2"
 
     scripts:
-      - name: Dekodo .p12 nga base64
+      - name: Prepare + Importo certifikatën (.p12) në keychain (robust)
         script: |
-          echo $P12_BASE64 | base64 --decode > AppleDistribution.p12
+          set -euo pipefail
 
-      - name: Importo certifikatën në keychain
-        script: |
+          # --- Read envs (kept your names) ---
+          P12_B64="${P12_BASE64:-}"
+          P12_PASSWORD="${CERTIFICATE_KEY_PASSWORD:-}"
+
+          echo "P12_BASE64 length: ${#P12_B64}"
+          echo "CERTIFICATE_KEY_PASSWORD length: ${#P12_PASSWORD}"
+
+          if [ -z "$P12_B64" ]; then
+            echo "❌ P12_BASE64 mungon (s’po vjen nga group 'panna')."
+            exit 1
+          fi
+
+          # --- Decode base64 -> AppleDistribution.p12 (macOS-compatible) ---
+          rm -f AppleDistribution.p12
+
+          if printf "%s" "$P12_B64" | base64 -D > AppleDistribution.p12 2>/dev/null; then
+            echo "Decoded with base64 -D ✅"
+          elif printf "%s" "$P12_B64" | base64 -d > AppleDistribution.p12 2>/dev/null; then
+            echo "Decoded with base64 -d ✅"
+          else
+            printf "%s" "$P12_B64" | base64 --decode > AppleDistribution.p12
+            echo "Decoded with base64 --decode ✅"
+          fi
+
+          if [ ! -s AppleDistribution.p12 ]; then
+            echo "❌ AppleDistribution.p12 doli bosh / decode dështoi."
+            exit 1
+          fi
+
+          # --- Validate p12 password BEFORE import ---
+          # (nëse dështon këtu -> password gabim ose p12 korrupt)
+          openssl pkcs12 -info -in AppleDistribution.p12 -noout -passin pass:"$P12_PASSWORD" >/dev/null
+          echo "P12 password OK ✅"
+
+          # --- Create + import into keychain ---
           security create-keychain -p "" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "" build.keychain
-          security import AppleDistribution.p12 -k build.keychain -P "$CERTIFICATE_KEY_PASSWORD" -T /usr/bin/codesign
+          security set-keychain-settings -lut 21600 build.keychain
+
+          security import AppleDistribution.p12 -k build.keychain -P "$P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+
+          echo "Keychain import OK ✅"
+
       - name: Print repo + current pubspec version
         script: |
           set -euo pipefail
@@ -56,7 +94,6 @@ workflows:
           echo "B64 length: ${#APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64}"
           [ -z "${APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64:-}" ] && echo "B64 missing ❌" && exit 1
 
-          # Decode (compat: different base64 versions)
           (echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 --decode > "$HOME/AuthKey.p8") || \
           (echo "$APP_STORE_CONNECT_PUBLISHER_PRIVATE_KEY_B64" | base64 -d > "$HOME/AuthKey.p8")
 
@@ -68,26 +105,21 @@ workflows:
         script: |
           set -euo pipefail
 
-          # Always-unique build number (UTC): YYYYMMDDHHMMSS
           BUILD_NUMBER="$(date -u +%Y%m%d%H%M%S)"
           echo "FORCING BUILD_NAME=$BUILD_NAME"
           echo "FORCING BUILD_NUMBER=$BUILD_NUMBER"
 
-          # Persist BUILD_NUMBER for next steps
           echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$CM_ENV"
 
-          # 1) pubspec.yaml version (Flutter side)
           perl -0777 -i -pe 's/^version:\s*.+$/version: '"$BUILD_NAME"'+'"$BUILD_NUMBER"'/m' pubspec.yaml
           echo "pubspec version now:"
           grep '^version:' pubspec.yaml || true
 
-          # 2) Xcode-native versioning (strong)
           cd ios
           agvtool new-version -all "$BUILD_NUMBER"
           agvtool new-marketing-version "$BUILD_NAME"
           cd ..
 
-          # 3) Info.plist (extra safety)
           PLIST="ios/Runner/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $BUILD_NAME" "$PLIST" 2>/dev/null \
             || /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $BUILD_NAME" "$PLIST"
@@ -97,7 +129,6 @@ workflows:
           echo "Info.plist now:"
           /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST"
-
 
       - name: Set up code signing settings on Xcode project
         script: |
@@ -138,7 +169,6 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
-
 
   android-workflow:
     name: Android Workflow
