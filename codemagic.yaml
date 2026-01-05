@@ -1,3 +1,42 @@
+            - name: Verify GoogleService-Info.plist inside IPA
+              script: |
+                set -e
+                IPA_PATH="$(ls -1 build/ios/ipa/*.ipa | head -n 1)"
+                echo "IPA: $IPA_PATH"
+                unzip -l "$IPA_PATH" | grep -i "GoogleService-Info.plist" \
+                  || (echo "❌ GoogleService-Info.plist MISSING inside IPA" && exit 1)
+                echo "✅ GoogleService-Info.plist FOUND inside IPA"
+      - name: Ensure GoogleService-Info.plist exists, decode, lint, and validate
+        script: |
+          set -e
+          PLIST_PATH="ios/Runner/GoogleService-Info.plist"
+          # Decode via Python for CRLF/base64 safety
+          if [[ -n "$GOOGLE_SERVICE_INFO_PLIST_B64" ]]; then
+            python3 -c "import os,base64; open('$PLIST_PATH','wb').write(base64.b64decode(os.environ['GOOGLE_SERVICE_INFO_PLIST_B64'].replace('\\n','').replace('\\r','')))"
+            echo "Decoded GoogleService-Info.plist from secret (python)."
+          fi
+          # Check plist exists
+          if [[ ! -f "$PLIST_PATH" ]]; then
+            echo "❌ GoogleService-Info.plist is missing!"
+            exit 1
+          fi
+          # Lint plist
+          plutil -lint "$PLIST_PATH"
+          # Validate required keys
+          GOOGLE_APP_ID=$(/usr/libexec/PlistBuddy -c "Print :GOOGLE_APP_ID" "$PLIST_PATH" 2>/dev/null || true)
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :BUNDLE_ID" "$PLIST_PATH" 2>/dev/null || true)
+          echo "GOOGLE_APP_ID: $GOOGLE_APP_ID"
+          echo "BUNDLE_ID: $BUNDLE_ID"
+          if [[ -z "$GOOGLE_APP_ID" ]]; then
+            echo "❌ GOOGLE_APP_ID missing in plist!"
+            exit 1
+          fi
+          if [[ "$BUNDLE_ID" != "com.panna.signalsApp" ]]; then
+            echo "❌ BUNDLE_ID mismatch: $BUNDLE_ID"
+            exit 1
+          fi
+          # Optionally: check project.pbxproj references the plist
+          grep -q "GoogleService-Info.plist" ios/Runner.xcodeproj/project.pbxproj && echo "Plist is referenced in project.pbxproj" || { echo "❌ Plist not referenced in project.pbxproj"; exit 1; }
 workflows:
   ios-workflow:
     name: iOS -> TestFlight (unique build number)
@@ -122,6 +161,24 @@ workflows:
           xcode-project use-profiles --project ios/Runner.xcodeproj --archive-method app-store
           echo "export_options.plist:"
           ls -la "$HOME/export_options.plist" || true
+      
+
+      - name: Print AppDelegate.swift and fail if forbidden Firebase native init is present
+        script: |
+          set -euo pipefail
+          echo "AppDelegate.swift (with line numbers):"
+          nl -ba ios/Runner/AppDelegate.swift || cat -n ios/Runner/AppDelegate.swift || cat ios/Runner/AppDelegate.swift
+          echo "\nChecking for forbidden native FirebaseApp.configure or [FIRApp configure] in ios/..."
+          if git grep -n "FirebaseApp.configure" -- ios; then
+            echo "❌ Forbidden FirebaseApp.configure found in ios/!"
+            exit 1
+          fi
+          if git grep -n "FIRApp configure" -- ios; then
+            echo "❌ Forbidden [FIRApp configure] found in ios/!"
+            exit 1
+          fi
+          echo "✅ No forbidden native FirebaseApp.configure or [FIRApp configure] found."
+          echo "\n💡 Sugjerim: Nëse build-i dështon pa arsye, provo të pastrosh cache në Codemagic dhe bëj clean build."
 
       - name: Build IPA
         script: |
@@ -139,6 +196,55 @@ workflows:
           ls -la build/ios/ipa || true
           ls -la build/ios/ipa/*.ipa || true
 
+      - name: Verify GoogleService-Info.plist is inside IPA (fail build if missing/mismatch)
+        script: |
+          set -euo pipefail
+
+          IPA_PATH="$(ls -1 build/ios/ipa/*.ipa | head -n 1)"
+          echo "IPA: $IPA_PATH"
+
+          TMP_DIR="$(mktemp -d)"
+          unzip -q "$IPA_PATH" -d "$TMP_DIR"
+
+          APP_DIR="$TMP_DIR/Payload/Runner.app"
+          PLIST="$APP_DIR/GoogleService-Info.plist"
+
+          echo "Looking in: $APP_DIR"
+          ls -la "$APP_DIR" | head -n 60
+
+          if [ ! -f "$PLIST" ]; then
+            echo "❌ GoogleService-Info.plist MISSING inside IPA!"
+            echo "Files matching *Google*:"
+            find "$APP_DIR" -maxdepth 1 -type f -iname "*google*" -print || true
+            exit 1
+          fi
+
+          echo "✅ GoogleService-Info.plist FOUND"
+
+          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :BUNDLE_ID" "$PLIST" 2>/dev/null || true)
+          GOOGLE_APP_ID=$(/usr/libexec/PlistBuddy -c "Print :GOOGLE_APP_ID" "$PLIST" 2>/dev/null || true)
+          GCM_SENDER_ID=$(/usr/libexec/PlistBuddy -c "Print :GCM_SENDER_ID" "$PLIST" 2>/dev/null || true)
+          API_KEY=$(/usr/libexec/PlistBuddy -c "Print :API_KEY" "$PLIST" 2>/dev/null || true)
+          PROJECT_ID=$(/usr/libexec/PlistBuddy -c "Print :PROJECT_ID" "$PLIST" 2>/dev/null || true)
+
+          echo "BUNDLE_ID: $BUNDLE_ID"
+          echo "GOOGLE_APP_ID: $GOOGLE_APP_ID"
+          echo "GCM_SENDER_ID: $GCM_SENDER_ID"
+          echo "PROJECT_ID: $PROJECT_ID"
+          echo "API_KEY length: ${#API_KEY}"
+
+          if [ "$BUNDLE_ID" != "com.panna.signalsApp" ]; then
+            echo "❌ BUNDLE_ID mismatch! Expected com.panna.signalsApp"
+            exit 1
+          fi
+
+          if [ -z "$GOOGLE_APP_ID" ] || [ -z "$GCM_SENDER_ID" ] || [ -z "$API_KEY" ] || [ -z "$PROJECT_ID" ]; then
+            echo "❌ Some required Firebase keys are missing in GoogleService-Info.plist"
+            exit 1
+          fi
+
+          echo "✅ Plist looks OK (present + bundle id matches + keys exist)."
+
       - name: Upload IPA to App Store Connect (TestFlight)
         script: |
           set -euo pipefail
@@ -155,6 +261,7 @@ workflows:
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
+
 
   android-workflow:
     name: Android Workflow

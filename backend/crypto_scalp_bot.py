@@ -1,4 +1,202 @@
-﻿import time
+﻿ADMIN_API_BASE = os.environ.get("ADMIN_API_BASE", "http://127.0.0.1:8000")
+# Helper: RSI (Wilder)
+def rsi(series, period=14):
+    delta = series.diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = -delta.where(delta < 0, 0.0)
+    avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+    rs = avg_gain / (avg_loss + 1e-10)
+    return 100 - (100 / (1 + rs))
+# BOT/ENV CONFIG
+import os
+BOT_ID = os.environ.get("BOT_ID", "crypto_scalp_bot")
+SOURCE_NAME = os.environ.get("SOURCE_NAME", "crypto_scalp_bot")
+ANALYSIS_TYPE = os.environ.get("ANALYSIS_TYPE", "crypto_scalp")
+# Helper: get last value from Series or float
+def _last(x):
+    if hasattr(x, 'iloc'):
+        return x.iloc[-1]
+    if hasattr(x, '__getitem__') and not isinstance(x, str):
+        return x[-1]
+    return float(x)
+# === CONFIGURATION ===
+TF_4H = "4h"
+TF_1H = "1h"
+TF_ENTRY = "15m"  # Change to "5m" for more sensitive entries
+EMA_FAST = 21
+EMA_SLOW = 50
+EMA_TREND = 200
+PIVOT_LEFT = 2
+PIVOT_RIGHT = 2
+MIN_MINUTES_BETWEEN_SIGNALS = 60
+RR = 2.0
+LOOKBACK_BARS = 120
+
+# === Helper: fetch_klines with lowercase columns ===
+def fetch_klines(symbol, interval, limit=LOOKBACK_BARS):
+    # This should return a DataFrame with columns: open, high, low, close, volume, time (all lowercase)
+    # Implement your real fetch here. For now, fallback to existing logic if present.
+    df = ... # fetch logic here
+    df.columns = [c.lower() for c in df.columns]
+    return df
+
+# === Helper: EMA ===
+def ema(series, length):
+    return series.ewm(span=length, adjust=False).mean()
+
+# === Helper: Find pivots ===
+def find_swings_pivots(df, left=PIVOT_LEFT, right=PIVOT_RIGHT):
+    highs = df['high']
+    lows = df['low']
+    pivot_highs = []
+    pivot_lows = []
+    for i in range(left, len(df) - right):
+        if highs.iloc[i] == max(highs.iloc[i-left:i+right+1]):
+            pivot_highs.append(i)
+        if lows.iloc[i] == min(lows.iloc[i-left:i+right+1]):
+            pivot_lows.append(i)
+    return pivot_highs, pivot_lows
+
+# === Helper: Structure+EMA trend detection ===
+def detect_trend_4h_1h(df_4h, df_1h):
+    # Structure: HH/HL for uptrend, LL/LH for downtrend
+    ph_4h, pl_4h = find_swings_pivots(df_4h)
+    ph_1h, pl_1h = find_swings_pivots(df_1h)
+    trend = "RANGE"
+    conf = 0
+    # 4H structure
+    if len(ph_4h) >= 2 and len(pl_4h) >= 2:
+        last_highs = [df_4h['high'].iloc[ph_4h[-2]], df_4h['high'].iloc[ph_4h[-1]]]
+        last_lows = [df_4h['low'].iloc[pl_4h[-2]], df_4h['low'].iloc[pl_4h[-1]]]
+        if last_highs[1] > last_highs[0] and last_lows[1] > last_lows[0]:
+            trend = "UP"
+            conf += 1
+        elif last_highs[1] < last_highs[0] and last_lows[1] < last_lows[0]:
+            trend = "DOWN"
+            conf += 1
+    # 1H structure
+    if len(ph_1h) >= 2 and len(pl_1h) >= 2:
+        last_highs = [df_1h['high'].iloc[ph_1h[-2]], df_1h['high'].iloc[ph_1h[-1]]]
+        last_lows = [df_1h['low'].iloc[pl_1h[-2]], df_1h['low'].iloc[pl_1h[-1]]]
+        if last_highs[1] > last_highs[0] and last_lows[1] > last_lows[0]:
+            if trend == "UP":
+                conf += 1
+            else:
+                trend = "RANGE"
+        elif last_highs[1] < last_highs[0] and last_lows[1] < last_lows[0]:
+            if trend == "DOWN":
+                conf += 1
+            else:
+                trend = "RANGE"
+    # EMA filter (1H)
+    ema_fast = ema(df_1h['close'], EMA_FAST)
+    ema_slow = ema(df_1h['close'], EMA_SLOW)
+    last_ema_fast = _last(ema_fast)
+    last_ema_slow = _last(ema_slow)
+    if trend == "UP" and last_ema_fast > last_ema_slow:
+        conf += 1
+    elif trend == "DOWN" and last_ema_fast < last_ema_slow:
+        conf += 1
+    else:
+        trend = "RANGE"
+    return trend, conf
+
+# === Helper: Confirm HL/LH after pullback ===
+def confirm_hl_lh(df, trend, pivots):
+    ph, pl = pivots
+    if trend == "UP" and len(pl) >= 2:
+        hl1, hl2 = pl[-2], pl[-1]
+        if df['low'].iloc[hl2] > df['low'].iloc[hl1]:
+            return True, hl2
+    if trend == "DOWN" and len(ph) >= 2:
+        lh1, lh2 = ph[-2], ph[-1]
+        if df['high'].iloc[lh2] < df['high'].iloc[lh1]:
+            return True, lh2
+    return False, None
+
+# === Helper: Entry trigger on lower TF ===
+def entry_trigger_lower_tf(df, trend):
+    # Simple bullish/bearish engulfing or strong close
+    if len(df) < 2:
+        return False
+    if trend == "UP":
+        return df['close'].iloc[-1] > df['open'].iloc[-1] and df['close'].iloc[-1] > df['high'].iloc[-2]
+    if trend == "DOWN":
+        return df['close'].iloc[-1] < df['open'].iloc[-1] and df['close'].iloc[-1] < df['low'].iloc[-2]
+    return False
+# =========================
+# DEPLOY CHECKLIST (for maintainers)
+# 1. Run: python -m py_compile crypto_scalp_bot.py
+# 2. Restart bot and tail log to confirm startup
+# 3. SCRIPT_VERSION is printed at startup for verification
+
+SCRIPT_VERSION = "2026-01-03-fix-fetch-symbols"
+
+print(f"[STARTUP] crypto_scalp_bot.py version: {SCRIPT_VERSION}")
+# =========================
+# STRATEGY HELPERS (shared)
+# =========================
+def ema(series, length):
+    return series.ewm(span=length, adjust=False).mean()
+
+def trend_by_ema(df, ema_len=200):
+    ema_val = ema(df['close'], ema_len)
+    last_close = df['close'].iloc[-1]
+    last_ema = ema_val.iloc[-1]
+    if last_close > last_ema:
+        return "UP"
+    elif last_close < last_ema:
+        return "DOWN"
+    else:
+        return "FLAT"
+
+def pullback_touched(df, direction, ema_len=50):
+    ema_val = ema(df['close'], ema_len)
+    if direction == "UP":
+        return (df['close'] < ema_val).iloc[-10:].any()
+    elif direction == "DOWN":
+        return (df['close'] > ema_val).iloc[-10:].any()
+    return False
+
+def detect_pivots(df, left=2, right=2):
+    highs = df['high']
+    lows = df['low']
+    pivot_highs = []
+    pivot_lows = []
+    for i in range(left, len(df) - right):
+        if highs.iloc[i] == max(highs.iloc[i-left:i+right+1]):
+            pivot_highs.append(i)
+        if lows.iloc[i] == min(lows.iloc[i-left:i+right+1]):
+            pivot_lows.append(i)
+    return pivot_highs, pivot_lows
+
+def hl_lh_bos_trigger(df, direction, left=2, right=2):
+    pivot_highs, pivot_lows = detect_pivots(df, left, right)
+    if direction == "UP" and len(pivot_lows) >= 2:
+        hl1, hl2 = pivot_lows[-2], pivot_lows[-1]
+        if df['low'].iloc[hl2] > df['low'].iloc[hl1]:
+            # BOS up: price breaks above last pivot high after HL
+            for ph in reversed(pivot_highs):
+                if ph > hl2:
+                    if df['close'].iloc[-1] > df['high'].iloc[ph]:
+                        entry = df['close'].iloc[-1]
+                        sl = df['low'].iloc[hl2] * 0.999
+                        return True, entry, sl
+                    break
+    if direction == "DOWN" and len(pivot_highs) >= 2:
+        lh1, lh2 = pivot_highs[-2], pivot_highs[-1]
+        if df['high'].iloc[lh2] < df['high'].iloc[lh1]:
+            # BOS down: price breaks below last pivot low after LH
+            for pl in reversed(pivot_lows):
+                if pl > lh2:
+                    if df['close'].iloc[-1] < df['low'].iloc[pl]:
+                        entry = df['close'].iloc[-1]
+                        sl = df['high'].iloc[lh2] * 1.001
+                        return True, entry, sl
+                    break
+    return False, None, None
+import time
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import traceback
@@ -54,7 +252,7 @@ last_heartbeat_ts = 0.0   # timestamp (time.time())
 
 def fetch_usdt_perpetual_symbols():
     """
-    Merr t├½ gjitha simbolet USDT-M PERPETUAL nga Binance Futures.
+    Merr të gjitha simbolet USDT-M PERPETUAL nga Binance Futures.
     P.sh. BTCUSDT, ETHUSDT, SOLUSDT, etj.
     """
     try:
@@ -66,12 +264,9 @@ def fetch_usdt_perpetual_symbols():
             if s.get("contractType") == "PERPETUAL" and s.get("quoteAsset") == "USDT":
                 symbols.append(s["symbol"])
         return symbols
-                clustered.append(np.mean(current_cluster))
-                current_cluster = [level]
-        clustered.append(np.mean(current_cluster))
-        return clustered[-num_levels:]
-    
-    return cluster_levels(support_levels), cluster_levels(resistance_levels)
+    except Exception as e:
+        print(f"[SYMBOLS] Failed to fetch USDT perpetual symbols: {e}")
+        return []
 
 
 def is_near_sr_level(price: float, levels: list, tolerance: float = 0.008) -> bool:
@@ -238,263 +433,67 @@ def send_signal_to_backend(
 # =====================================================
 
 def analyze_symbol_scalp(symbol: str):
-    """
-    Strategji e p├½rmir├½suar:
-    - Trend 1H (EMA50/EMA200) + ADX
-    - Pullback n├½ 5m te EMA20/EMA50
-    - RSI(14) 5m oversold/overbought dhe rikthim
-    - Volume confirmation
-    - RSI Divergence
-    - Support/Resistance levels
-    - ATR-based dynamic SL/TP
-    - 4 nga 6 kushte duhet t├½ jen├½ TRUE
-    """
-
-    # 1H p├½r trend
-    df_1h = fetch_klines(symbol, interval="1h", limit=250)
-    if df_1h.empty:
+    # 1. Get data
+    df_4h = fetch_klines(symbol, TF_4H, LOOKBACK_BARS)
+    df_1h = fetch_klines(symbol, TF_1H, LOOKBACK_BARS)
+    df_entry = fetch_klines(symbol, TF_ENTRY, LOOKBACK_BARS)
+    if df_4h.empty or df_1h.empty or df_entry.empty:
+        print(f"[{symbol}] Skipped: insufficient data.")
         return
 
-    trend = detect_trend_1h(df_1h)
-    if trend == "choppy":
-        # print(f"[{symbol}] Trend choppy, skip.")
+    # 2. Trend detection
+    trend, conf = detect_trend_4h_1h(df_4h, df_1h)
+    if trend not in ("UP", "DOWN") or conf < 2:
+        print(f"[{symbol}] Skipped: trend not strong (trend={trend}, conf={conf})")
         return
 
-    # 5M p├½r entry
-    df_5m = fetch_klines(symbol, interval="5m", limit=300)
-    if df_5m.empty or len(df_5m) < 50:
+    # 3. Pullback to EMA zone
+    ema_fast = ema(df_1h['close'], EMA_FAST)
+    ema_slow = ema(df_1h['close'], EMA_SLOW)
+    price = _last(df_1h['close'])
+    last_ema_fast = _last(ema_fast)
+    last_ema_slow = _last(ema_slow)
+    in_zone = (last_ema_fast <= price <= last_ema_slow) or (last_ema_slow <= price <= last_ema_fast)
+    if not in_zone:
+        print(f"[{symbol}] Skipped: no pullback to EMA zone.")
         return
 
-    close = df_5m["close"]
-    high = df_5m["high"]
-    low = df_5m["low"]
-    volume = df_5m["volume"]
-
-    ema20 = ema(close, 20)
-    ema50 = ema(close, 50)
-    rsi14 = rsi(close, 14)
-    atr = calculate_atr(df_5m, 14)
-
-    last_close = close.iloc[-1]
-    last_high = high.iloc[-1]
-    last_low = low.iloc[-1]
-    last_volume = volume.iloc[-1]
-    last_ema20 = ema20.iloc[-1]
-    last_ema50 = ema50.iloc[-1]
-    last_rsi = rsi14.iloc[-1]
-    last_atr = float(atr.iloc[-1]) if len(atr) > 0 else 0.0
-
-    avg_vol20 = volume.iloc[-20:].mean()
-    volume_ratio = last_volume / (avg_vol20 + 0.00001)
-    
-    # ADX za 5m
-    adx_5m = calculate_adx(df_5m, period=14)
-    
-    # EMA Alignment (NEW - 7th factor)
-    ema_alignment = check_ema_alignment(df_5m)
-    
-    # S/R levels
-    support_levels, resistance_levels = find_support_resistance_levels(df_5m, lookback=150)
-    
-    # RSI Divergence
-    bullish_div, bearish_div = detect_rsi_divergence(df_5m, rsi_period=14, lookback=30)
-    
-    # ATR check
-    if last_atr == 0.0 or last_atr < last_close * 0.0005:
-        # print(f"[{symbol}] ATR shum├½ i ul├½t, skip.")
+    # 4. Confirm HL/LH on 1H
+    pivots = find_swings_pivots(df_1h)
+    hl_lh_ok, pivot_idx = confirm_hl_lh(df_1h, trend, pivots)
+    if not hl_lh_ok:
+        print(f"[{symbol}] Skipped: no HL/LH confirmation.")
         return
 
-    # ======================
-    # LONG SCALP KUSHTET (6 pika)
-    # ======================
-    long_score = 0
-    long_reasons = []
+    # 5. Trigger candle on lower TF
+    trigger = entry_trigger_lower_tf(df_entry, trend)
+    if not trigger:
+        print(f"[{symbol}] Skipped: no trigger candle on {TF_ENTRY}.")
+        return
 
-    # 1) Trend 1H bullish + ADX
-    if trend == "bull":
-        long_score += 1
-        long_reasons.append(f"Trend_1H_BULL")
-        if adx_5m >= MIN_ADX_STRENGTH:
-            long_score += 0.5
-            long_reasons.append(f"ADX_{adx_5m:.1f}")
-
-    # 2) Pullback te EMA20/EMA50 dhe rikthim lart
-    prev_close = close.iloc[-2]
-    prev_low = low.iloc[-2]
-    prev_ema20 = ema20.iloc[-2]
-    prev_ema50 = ema50.iloc[-2]
-
-    if (
-        (prev_low < prev_ema20 <= prev_close)
-        or (prev_low < prev_ema50 <= prev_close)
-    ) and last_close > last_ema20:
-        long_score += 1
-        long_reasons.append("Pullback_EMA_bounce")
-
-    # 3) RSI oversold -> rikthim
-    prev_rsi = rsi14.iloc[-2]
-    if prev_rsi < 30 < last_rsi:
-        long_score += 1
-        long_reasons.append("RSI_oversold_recovery")
-
-    # 4) Volume i lart├½
-    if volume_ratio >= MIN_VOLUME_RATIO:
-        long_score += 1
-        long_reasons.append(f"Vol_{volume_ratio:.2f}x")
-
-    # 5) RSI Bullish Divergence
-    if bullish_div:
-        long_score += 1
-        long_reasons.append("RSI_Bull_Div")
-    
-    # 6) Jo af├½r resistance
-    near_resistance = is_near_sr_level(last_close, resistance_levels, tolerance=0.008)
-    if not near_resistance:
-        long_score += 0.5
+    # 6. Entry/SL/TP
+    entry = df_entry['close'].iloc[-1]
+    if trend == "UP":
+        sl = df_1h['low'].iloc[pivot_idx] * 0.999
+        tp = entry + RR * abs(entry - sl)
     else:
-        long_reasons.append("!Near_RES")
-    
-    # 7) EMA Alignment
-    if ema_alignment == "bull":
-        long_score += 1
-        long_reasons.append("EMA_ALIGNED")
+        sl = df_1h['high'].iloc[pivot_idx] * 1.001
+        tp = entry - RR * abs(entry - sl)
 
-    # ======================
-    # SHORT SCALP KUSHTET (7 pika tani!)
-    # ======================
-    short_score = 0
-    short_reasons = []
-
-    # 1) Trend 1H bearish + ADX
-    if trend == "bear":
-        short_score += 1
-        short_reasons.append(f"Trend_1H_BEAR")
-        if adx_5m >= MIN_ADX_STRENGTH:
-            short_score += 0.5
-            short_reasons.append(f"ADX_{adx_5m:.1f}")
-
-    # 2) Pullback lart te EMA20/50 dhe refuzim posht├½
-    prev_high = high.iloc[-2]
-    if (
-        (prev_high > prev_ema20 >= prev_close)
-        or (prev_high > prev_ema50 >= prev_close)
-    ) and last_close < last_ema20:
-        short_score += 1
-        short_reasons.append("Pullback_EMA_rejection")
-
-    # 3) RSI overbought -> rikthim
-    if prev_rsi > 70 > last_rsi:
-        short_score += 1
-        short_reasons.append("RSI_overbought_drop")
-
-    # 4) Volume i lart├½
-    if volume_ratio >= MIN_VOLUME_RATIO:
-        short_score += 1
-        short_reasons.append(f"Vol_{volume_ratio:.2f}x")
-
-    # 5) RSI Bearish Divergence
-    if bearish_div:
-        short_score += 1
-        short_reasons.append("RSI_Bear_Div")
-    
-    # 6) Jo af├½r support
-    near_support = is_near_sr_level(last_close, support_levels, tolerance=0.008)
-    if not near_support:
-        short_score += 0.5
-    else:
-        short_reasons.append("!Near_SUP")    
-    # 7) EMA Alignment
-    if ema_alignment == "bear":
-        short_score += 1
-        short_reasons.append("EMA_ALIGNED")
-    # ======================
-    # VENDIMI I SINJALIT
-    # ======================
-
-    direction = None
-    used_score = 0
-    reasons = []
-
-    if long_score >= MIN_SCORE_FOR_SIGNAL and long_score >= short_score:
-        if near_resistance:
-            print(f"[{symbol}] LONG signal por af├½r resistance, SKIP.")
-            return
-        direction = "BUY"
-        used_score = long_score
-        reasons = long_reasons
-        
-    elif short_score >= MIN_SCORE_FOR_SIGNAL and short_score > long_score:
-        if near_support:
-            print(f"[{symbol}] SHORT signal por af├½r support, SKIP.")
-            return
-        direction = "SELL"
-        used_score = short_score
-        reasons = short_reasons
-
-    if direction is None:
-        # print(f"[{symbol}] No strong scalp signal. (long={long_score:.1f}, short={short_score:.1f})")
-        return
-
-    now = datetime.now(timezone.utc)
-    last_t = last_signal_time.get(symbol)
-    if last_t is not None:
-        minutes_since = (now - last_t).total_seconds() / 60.0
-        if minutes_since < MIN_MINUTES_BETWEEN_SIGNALS:
-            # print(f"[{symbol}] {direction} ekziston {minutes_since:.1f} min m├½ par├½, skip.")
-            return
-
-    prev_side = last_signal_side.get(symbol)
-    if prev_side == direction:
-        # print(f"[{symbol}] {direction} sinjal tashm├½ i fundit, skip duplicate.")
-        return
-
-    # ===== FIXED PERCENTAGE SL/TP (1.5% SL, 4.5% TP) =====
-    entry = last_close
-    sl_distance_pct = FIXED_SL_PERCENT / 100.0  # 0.015
-    tp_distance_pct = FIXED_TP_PERCENT / 100.0  # 0.045
-    
-    if direction == "BUY":
-        sl = entry * (1 - sl_distance_pct)
-        tp = entry * (1 + tp_distance_pct)
-    else:  # SELL
-        sl = entry * (1 + sl_distance_pct)
-        tp = entry * (1 - tp_distance_pct)
-    
-    # Risk/Reward është automatikisht 4.5/1.5 = 3.0
-    risk_reward_ratio = FIXED_TP_PERCENT / FIXED_SL_PERCENT
-    
-    sl_pct = FIXED_SL_PERCENT
-    tp_pct = FIXED_TP_PERCENT
-
-    reasons_text = ", ".join(reasons)
-    extra = (
-        f"Scalp 5m | Score={used_score:.1f}/6, RR={risk_reward_ratio:.2f}, "
-        f"ATR={last_atr:.4f}, ADX={adx_5m:.1f}, Vol={volume_ratio:.2f}x | "
-        f"SL={sl_pct:.2f}%, TP={tp_pct:.2f}% | {reasons_text}"
-    )
-
-    last_signal_time[symbol] = now
-    last_signal_side[symbol] = direction
-
-    local_time_str = now.astimezone(LOCAL_TZ).strftime("%Y-%m-%d %H:%M")
-    print(
-        f"[{symbol}] ≡ƒÄ» {direction} SCALP @ {entry:.4f} (SL={sl:.4f}, TP={tp:.4f}) | "
-        f"Score={used_score:.1f}/6, RR={risk_reward_ratio:.2f}, ADX={adx_5m:.1f} [{local_time_str}]"
-    )
-
-    # 1) d├½rgo sinjalin te tabela kryesore
+    # 7. Send signal
+    debug_info = f"trend={trend}, conf={conf}, pullback_zone={in_zone}, HL_LH={hl_lh_ok}, trigger={trigger}"
+    extra = f"StructureScalp | {debug_info}"
     send_signal_to_backend(
         symbol=symbol,
-        direction=direction,
-        timeframe="5m",
+        direction="BUY" if trend == "UP" else "SELL",
+        timeframe=TF_ENTRY,
         entry=entry,
         sl=sl,
         tp=tp,
         extra_text=extra,
     )
-
-    # 2) njofto admin backend-in
-    notify_signal_sent(symbol, direction)
+    notify_signal_sent(symbol, "BUY" if trend == "UP" else "SELL")
+    print(f"[{symbol}] Signal sent: {trend} | entry={entry:.4f} sl={sl:.4f} tp={tp:.4f} | {debug_info}")
 
 
 # =====================================================
@@ -527,12 +526,33 @@ def main_loop():
             send_heartbeat()
             last_heartbeat_ts = now_ts
 
+        # --- SCAN ALL SYMBOLS, SCORE, LIMIT TOP N ---
+        signals_candidates = []
         for symbol in symbols:
             try:
-                analyze_symbol_scalp(symbol)
+                # analyze_symbol_scalp returns (score, symbol, ...)
+                result = analyze_symbol_scalp(symbol)
+                if result and isinstance(result, dict) and result.get('score', 0) >= MIN_SCORE_FOR_SIGNAL:
+                    signals_candidates.append(result)
             except Exception:
                 print(f"[{symbol}] Exception in analyze_symbol_scalp:")
                 traceback.print_exc()
+
+        # Sort by score descending, take top N
+        TOP_N = 3  # configurable
+        signals_candidates = sorted(signals_candidates, key=lambda x: x['score'], reverse=True)[:TOP_N]
+        for signal in signals_candidates:
+            send_signal_to_backend(
+                symbol=signal['symbol'],
+                direction=signal['direction'],
+                timeframe=signal['timeframe'],
+                entry=signal['entry'],
+                sl=signal['sl'],
+                tp=signal['tp'],
+                extra_text=signal.get('extra_text', "")
+            )
+            notify_signal_sent(signal['symbol'], signal['direction'])
+            print(f"[BOT] Sent signal: {signal['symbol']} {signal['direction']} score={signal['score']}")
 
         print(f"\nSleeping {SCAN_INTERVAL} seconds...\n")
         time.sleep(SCAN_INTERVAL)

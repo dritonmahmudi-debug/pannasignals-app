@@ -1,4 +1,169 @@
-﻿import time
+﻿# === CONFIGURATION ===
+TF_4H = "4h"
+TF_1H = "1h"
+TF_ENTRY = "15m"  # Change to "5m" for more sensitive entries
+EMA_FAST = 21
+EMA_SLOW = 50
+EMA_TREND = 200
+PIVOT_LEFT = 2
+PIVOT_RIGHT = 2
+MIN_MINUTES_BETWEEN_SIGNALS = 60
+RR = 2.0
+LOOKBACK_BARS = 120
+
+# === Helper: fetch_ohlc with lowercase columns ===
+def fetch_ohlc(symbol, interval, lookback_days=LOOKBACK_BARS):
+    # This should return a DataFrame with columns: open, high, low, close, volume, time (all lowercase)
+    # Implement your real fetch here. For now, fallback to existing logic if present.
+    df = ... # fetch logic here
+    df.columns = [c.lower() for c in df.columns]
+    return df
+
+# === Helper: EMA ===
+def ema(series, length):
+    return series.ewm(span=length, adjust=False).mean()
+
+# === Helper: Find pivots ===
+def find_swings_pivots(df, left=PIVOT_LEFT, right=PIVOT_RIGHT):
+    highs = df['high']
+    lows = df['low']
+    pivot_highs = []
+    pivot_lows = []
+    for i in range(left, len(df) - right):
+        if highs.iloc[i] == max(highs.iloc[i-left:i+right+1]):
+            pivot_highs.append(i)
+        if lows.iloc[i] == min(lows.iloc[i-left:i+right+1]):
+            pivot_lows.append(i)
+    return pivot_highs, pivot_lows
+
+# === Helper: Structure+EMA trend detection ===
+def detect_trend_4h_1h(df_4h, df_1h):
+    # Structure: HH/HL for uptrend, LL/LH for downtrend
+    ph_4h, pl_4h = find_swings_pivots(df_4h)
+    ph_1h, pl_1h = find_swings_pivots(df_1h)
+    trend = "RANGE"
+    conf = 0
+    # 4H structure
+    if len(ph_4h) >= 2 and len(pl_4h) >= 2:
+        last_highs = [df_4h['high'].iloc[ph_4h[-2]], df_4h['high'].iloc[ph_4h[-1]]]
+        last_lows = [df_4h['low'].iloc[pl_4h[-2]], df_4h['low'].iloc[pl_4h[-1]]]
+        if last_highs[1] > last_highs[0] and last_lows[1] > last_lows[0]:
+            trend = "UP"
+            conf += 1
+        elif last_highs[1] < last_highs[0] and last_lows[1] < last_lows[0]:
+            trend = "DOWN"
+            conf += 1
+    # 1H structure
+    if len(ph_1h) >= 2 and len(pl_1h) >= 2:
+        last_highs = [df_1h['high'].iloc[ph_1h[-2]], df_1h['high'].iloc[ph_1h[-1]]]
+        last_lows = [df_1h['low'].iloc[pl_1h[-2]], df_1h['low'].iloc[pl_1h[-1]]]
+        if last_highs[1] > last_highs[0] and last_lows[1] > last_lows[0]:
+            if trend == "UP":
+                conf += 1
+            else:
+                trend = "RANGE"
+        elif last_highs[1] < last_highs[0] and last_lows[1] < last_lows[0]:
+            if trend == "DOWN":
+                conf += 1
+            else:
+                trend = "RANGE"
+    # EMA filter (1H)
+    ema_fast = ema(df_1h['close'], EMA_FAST)
+    ema_slow = ema(df_1h['close'], EMA_SLOW)
+    if trend == "UP" and ema_fast.iloc[-1] > ema_slow.iloc[-1]:
+        conf += 1
+    elif trend == "DOWN" and ema_fast.iloc[-1] < ema_slow.iloc[-1]:
+        conf += 1
+    else:
+        trend = "RANGE"
+    return trend, conf
+
+# === Helper: Confirm HL/LH after pullback ===
+def confirm_hl_lh(df, trend, pivots):
+    ph, pl = pivots
+    if trend == "UP" and len(pl) >= 2:
+        hl1, hl2 = pl[-2], pl[-1]
+        if df['low'].iloc[hl2] > df['low'].iloc[hl1]:
+            return True, hl2
+    if trend == "DOWN" and len(ph) >= 2:
+        lh1, lh2 = ph[-2], ph[-1]
+        if df['high'].iloc[lh2] < df['high'].iloc[lh1]:
+            return True, lh2
+    return False, None
+
+# === Helper: Entry trigger on lower TF ===
+def entry_trigger_lower_tf(df, trend):
+    # Simple bullish/bearish engulfing or strong close
+    if len(df) < 2:
+        return False
+    if trend == "UP":
+        return df['close'].iloc[-1] > df['open'].iloc[-1] and df['close'].iloc[-1] > df['high'].iloc[-2]
+    if trend == "DOWN":
+        return df['close'].iloc[-1] < df['open'].iloc[-1] and df['close'].iloc[-1] < df['low'].iloc[-2]
+    return False
+# =========================
+# STRATEGY HELPERS (shared)
+# =========================
+def ema(series, length):
+    return series.ewm(span=length, adjust=False).mean()
+
+def trend_by_ema(df, ema_len=200):
+    ema_val = ema(df['Close'], ema_len)
+    last_close = df['Close'].iloc[-1]
+    last_ema = ema_val.iloc[-1]
+    if last_close > last_ema:
+        return "UP"
+    elif last_close < last_ema:
+        return "DOWN"
+    else:
+        return "FLAT"
+
+def pullback_touched(df, direction, ema_len=50):
+    ema_val = ema(df['Close'], ema_len)
+    if direction == "UP":
+        return (df['Close'] < ema_val).iloc[-10:].any()
+    elif direction == "DOWN":
+        return (df['Close'] > ema_val).iloc[-10:].any()
+    return False
+
+def detect_pivots(df, left=2, right=2):
+    highs = df['High']
+    lows = df['Low']
+    pivot_highs = []
+    pivot_lows = []
+    for i in range(left, len(df) - right):
+        if highs.iloc[i] == max(highs.iloc[i-left:i+right+1]):
+            pivot_highs.append(i)
+        if lows.iloc[i] == min(lows.iloc[i-left:i+right+1]):
+            pivot_lows.append(i)
+    return pivot_highs, pivot_lows
+
+def hl_lh_bos_trigger(df, direction, left=2, right=2):
+    pivot_highs, pivot_lows = detect_pivots(df, left, right)
+    if direction == "UP" and len(pivot_lows) >= 2:
+        hl1, hl2 = pivot_lows[-2], pivot_lows[-1]
+        if df['Low'].iloc[hl2] > df['Low'].iloc[hl1]:
+            # BOS up: price breaks above last pivot high after HL
+            for ph in reversed(pivot_highs):
+                if ph > hl2:
+                    if df['Close'].iloc[-1] > df['High'].iloc[ph]:
+                        entry = df['Close'].iloc[-1]
+                        sl = df['Low'].iloc[hl2] * 0.999
+                        return True, entry, sl
+                    break
+    if direction == "DOWN" and len(pivot_highs) >= 2:
+        lh1, lh2 = pivot_highs[-2], pivot_highs[-1]
+        if df['High'].iloc[lh2] < df['High'].iloc[lh1]:
+            # BOS down: price breaks below last pivot low after LH
+            for pl in reversed(pivot_lows):
+                if pl > lh2:
+                    if df['Close'].iloc[-1] < df['Low'].iloc[pl]:
+                        entry = df['Close'].iloc[-1]
+                        sl = df['High'].iloc[lh2] * 1.001
+                        return True, entry, sl
+                    break
+    return False, None, None
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Tuple, Optional
 
@@ -486,226 +651,65 @@ def compute_ema(series: pd.Series, period: int = 20) -> pd.Series:
 # ======================================================
 
 def analyze_symbol(symbol: str):
-    global last_signal_time
-
-    df = fetch_ohlc(symbol, interval=INTERVAL, lookback_days=LOOKBACK_DAYS)
-    if df.empty or len(df) < 60:
-        # print(f"[{symbol}] Not enough data for scalping.")
+    # 1. Get data
+    df_4h = fetch_ohlc(symbol, TF_4H, LOOKBACK_BARS)
+    df_1h = fetch_ohlc(symbol, TF_1H, LOOKBACK_BARS)
+    df_entry = fetch_ohlc(symbol, TF_ENTRY, LOOKBACK_BARS)
+    if df_4h.empty or df_1h.empty or df_entry.empty:
+        print(f"[{symbol}] Skipped: insufficient data.")
         return
 
-    # Llogarit indicatorÃ«t
-    df["EMA20"] = compute_ema(df["Close"], period=20)
-    atr = calculate_atr(df, period=14)
-    df["ATR"] = atr
-    
-    adx_value = calculate_adx(df, period=14)
-    
-    # EMA Alignment (NEW - 7th factor)
-    ema_alignment = check_ema_alignment(df)
-    
-    support_levels, resistance_levels = find_support_resistance_levels(df, lookback=150)
-    bullish_div, bearish_div = detect_rsi_divergence(df, rsi_period=14, lookback=30)
+    # 2. Trend detection
+    trend, conf = detect_trend_4h_1h(df_4h, df_1h)
+    if trend not in ("UP", "DOWN") or conf < 2:
+        print(f"[{symbol}] Skipped: trend not strong (trend={trend}, conf={conf})")
+        return
 
-    trend, h1_idx, h2_idx, l1_idx, l2_idx = classify_trend(df)
+    # 3. Pullback to EMA zone
+    ema_fast = ema(df_1h['close'], EMA_FAST)
+    ema_slow = ema(df_1h['close'], EMA_SLOW)
+    price = df_1h['close'].iloc[-1]
+    in_zone = (ema_fast.iloc[-1] <= price <= ema_slow.iloc[-1]) or (ema_slow.iloc[-1] <= price <= ema_fast.iloc[-1])
+    if not in_zone:
+        print(f"[{symbol}] Skipped: no pullback to EMA zone.")
+        return
 
-    last_close = float(df["Close"].iloc[-1])
-    prev_close = float(df["Close"].iloc[-2])
-    last_ema20 = float(df["EMA20"].iloc[-1])
-    prev_ema20 = float(df["EMA20"].iloc[-2])
-    last_atr = float(df["ATR"].iloc[-1]) if len(df["ATR"]) > 0 else 0.0
-    
-    # Volume check
-    if len(df) >= 20:
-        avg_volume = float(df["Volume"].iloc[-20:].mean())
-        current_volume = float(df["Volume"].iloc[-1])
-        volume_ratio = current_volume / (avg_volume + 0.00001)
-        high_volume = bool(volume_ratio >= MIN_VOLUME_RATIO)
+    # 4. Confirm HL/LH on 1H
+    pivots = find_swings_pivots(df_1h)
+    hl_lh_ok, pivot_idx = confirm_hl_lh(df_1h, trend, pivots)
+    if not hl_lh_ok:
+        print(f"[{symbol}] Skipped: no HL/LH confirmation.")
+        return
+
+    # 5. Trigger candle on lower TF
+    trigger = entry_trigger_lower_tf(df_entry, trend)
+    if not trigger:
+        print(f"[{symbol}] Skipped: no trigger candle on {TF_ENTRY}.")
+        return
+
+    # 6. Entry/SL/TP
+    entry = df_entry['close'].iloc[-1]
+    if trend == "UP":
+        sl = df_1h['low'].iloc[pivot_idx] * 0.999
+        tp = entry + RR * abs(entry - sl)
     else:
-        volume_ratio = 0.0
-        high_volume = False
-    
-    # ATR check
-    if last_atr == 0.0 or last_atr < last_close * 0.0001:
-        # print(f"[{symbol}] ATR shumÃ« i ulÃ«t, skip.")
-        return
+        sl = df_1h['high'].iloc[pivot_idx] * 1.001
+        tp = entry - RR * abs(entry - sl)
 
-    # ==================================================
-    #           SCORING SYSTEM (6 pika)
-    # ==================================================
-    
-    buy_score = 0
-    sell_score = 0
-    buy_details = []
-    sell_details = []
-    
-    # 1) Trend (HH/HL vs LH/LL)
-    if trend == "bull":
-        buy_score += 1
-        buy_details.append("BULL_TREND")
-    elif trend == "bear":
-        sell_score += 1
-        sell_details.append("BEAR_TREND")
-    
-    # 2) EMA20 pullback
-    if trend == "bull":
-        if prev_close < prev_ema20 and last_close > last_ema20:
-            buy_score += 1
-            buy_details.append("EMA20_BOUNCE")
-    
-    if trend == "bear":
-        if prev_close > prev_ema20 and last_close < last_ema20:
-            sell_score += 1
-            sell_details.append("EMA20_REJECT")
-    
-    # 3) ADX trend strength
-    if adx_value >= MIN_ADX_STRENGTH:
-        if trend == "bull":
-            buy_score += 1
-            buy_details.append(f"ADX_{adx_value:.1f}")
-        elif trend == "bear":
-            sell_score += 1
-            sell_details.append(f"ADX_{adx_value:.1f}")
-    
-    # 4) Volume confirmation
-    if high_volume:
-        if trend == "bull":
-            buy_score += 1
-            buy_details.append(f"VOL_{volume_ratio:.2f}x")
-        if trend == "bear":
-            sell_score += 1
-            sell_details.append(f"VOL_{volume_ratio:.2f}x")
-    
-    # 5) RSI Divergence
-    if bullish_div:
-        buy_score += 1
-        buy_details.append("RSI_BULL_DIV")
-    if bearish_div:
-        sell_score += 1
-        sell_details.append("RSI_BEAR_DIV")
-    
-    # 6) Jo afër S/R
-    near_resistance = is_near_sr_level(last_close, resistance_levels, tolerance=0.008)
-    near_support = is_near_sr_level(last_close, support_levels, tolerance=0.008)
-    
-    if not near_resistance and trend == "bull":
-        buy_score += 0.5
-    if not near_support and trend == "bear":
-        sell_score += 0.5
-    
-    # 7) EMA Alignment
-    if ema_alignment == "bull":
-        buy_score += 1
-        buy_details.append("EMA_ALIGNED")
-    elif ema_alignment == "bear":
-        sell_score += 1
-        sell_details.append("EMA_ALIGNED")
-    
-    # 8) MACD Crossover
-    macd_line, signal_line, histogram, macd_bull_cross, macd_bear_cross = calculate_macd(df)
-    if macd_bull_cross:
-        buy_score += 1
-        buy_details.append("MACD_CROSS")
-    if macd_bear_cross:
-        sell_score += 1
-        sell_details.append("MACD_CROSS")
-    
-    # 9) Stochastic
-    k_val, d_val, stoch_oversold_cross, stoch_overbought_cross = calculate_stochastic(df)
-    if stoch_oversold_cross:
-        buy_score += 1
-        buy_details.append("STOCH_OVER")
-    if stoch_overbought_cross:
-        sell_score += 1
-        sell_details.append("STOCH_OVER")
-    
-    # ==================================================
-    #                   DECISION
-    # ==================================================
-    
-    side = None
-    score_used = 0
-    signal_details = []
-    
-    if buy_score >= MIN_SCORE_FOR_SIGNAL and buy_score >= sell_score:
-        if near_resistance:
-            print(f"[{symbol}] BUY signal por afër resistance, SKIP.")
-            return
-        side = "BUY"
-        score_used = buy_score
-        signal_details = buy_details
-        
-    elif sell_score >= MIN_SCORE_FOR_SIGNAL and sell_score > buy_score:
-        if near_support:
-            print(f"[{symbol}] SELL signal por afër support, SKIP.")
-            return
-        side = "SELL"
-        score_used = sell_score
-        signal_details = sell_details
-    else:
-        print(f"[{symbol}] ❌ No signal: BUY={buy_score:.1f}/9, SELL={sell_score:.1f}/9")
-        return
-
-    # Kontrol frekuencë
-    key = (symbol, side)
-    now = datetime.now(timezone.utc)
-    last_t = last_signal_time.get(key)
-    if last_t is not None:
-        minutes_since = (now - last_t).total_seconds() / 60.0
-        if minutes_since < MIN_MINUTES_BETWEEN_SIGNALS:
-            # print(f"[{symbol}] {side} setup, por ka {minutes_since:.1f} min nga sinjali i fundit -> SKIP.")
-            return
-
-    last_signal_time[key] = now
-
-    # ===== PERCENT-BASED SL/TP =====
-    if side == "BUY":
-        sl = last_close * (1 - SL_PERCENT)
-        tp = last_close * (1 + TP_PERCENT)
-    else:  # SELL
-        sl = last_close * (1 + SL_PERCENT)
-        tp = last_close * (1 - TP_PERCENT)
-    
-    # Risk/Reward check
-    risk = abs(last_close - sl)
-    reward = abs(tp - last_close)
-    
-    if risk == 0:
-        return
-    
-    risk_reward_ratio = reward / risk
-    
-    if risk_reward_ratio < MIN_RISK_REWARD:
-        print(f"[{symbol}] RR {risk_reward_ratio:.2f} < {MIN_RISK_REWARD}, SKIP.")
-        return
-    
-    sl_pct = abs(sl - last_close) / last_close * 100
-    tp_pct = abs(tp - last_close) / last_close * 100
-
-    extra_text = (
-        f"Forex Scalp 5m | Trend={trend}, ADX={adx_value:.1f} | "
-        f"Confluences: {', '.join(signal_details)} | "
-        f"Score={score_used:.1f}/9, RR={risk_reward_ratio:.2f}, ATR={last_atr:.5f}, "
-        f"Vol={volume_ratio:.2f}x, SL={sl_pct:.2f}%, TP={tp_pct:.2f}%"
-    )
-
-    print(
-        f"[{symbol}] ðŸŽ¯ {side} SCALP @ {last_close:.5f} (SL={sl:.5f}, TP={tp:.5f}) | "
-        f"Score={score_used:.1f}/9, RR={risk_reward_ratio:.2f}, ADX={adx_value:.1f}"
-    )
-
-    # 1) DÃ«rgo sinjalin te tabela kryesore
+    # 7. Send signal
+    debug_info = f"trend={trend}, conf={conf}, pullback_zone={in_zone}, HL_LH={hl_lh_ok}, trigger={trigger}"
+    extra = f"StructureScalp | {debug_info}"
     send_signal_to_backend(
         symbol=symbol,
-        direction=side,
-        timeframe=INTERVAL,
-        entry=last_close,
+        direction="BUY" if trend == "UP" else "SELL",
+        timeframe=TF_ENTRY,
+        entry=entry,
         sl=sl,
         tp=tp,
-        extra_text=extra_text,
+        extra_text=extra,
     )
-
-    # 2) Njofto admin backend-in
-    notify_signal_sent(symbol, side)
+    notify_signal_sent(symbol, "BUY" if trend == "UP" else "SELL")
+    print(f"[{symbol}] Signal sent: {trend} | entry={entry:.4f} sl={sl:.4f} tp={tp:.4f} | {debug_info}")
 
 
 # ======================================================

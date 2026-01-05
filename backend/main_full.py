@@ -1,3 +1,4 @@
+# ...existing code...
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Dict
 import os
@@ -61,8 +62,6 @@ class Signal(Base):
     extra_text = Column(String, nullable=True)
 
 
-
-
 class Device(Base):
     """
     Device për FCM – ruajmë token për të dërguar push.
@@ -116,6 +115,15 @@ Base.metadata.create_all(bind=engine)
 # ======================================================
 #                FIREBASE ADMIN (SERVER SIDE)
 # ======================================================
+
+# ------------- HISTORY ENDPOINT -------------
+
+@app.get("/signals/history", response_model=List[SignalResponse])
+def history_signals(limit: int = Query(100, ge=1, le=500), db: Session = Depends(get_db)):
+    """
+    Kthen sinjalet e mbyllura (closed) për historinë.
+    """
+    return list_signals(status="closed", limit=limit, db=db)
 
 firebase_app: Optional[firebase_admin.App] = None
 try:
@@ -405,6 +413,43 @@ def send_push_for_signal(db: Session, signal: Signal):
     )
 
 
+def send_push_for_signal_close(db, signal, close_type="CLOSE", closed_time_utc=None):
+    """
+    Dërgon push kur sinjali mbyllet (TP/SL/BE/Manual).
+    close_type: "tp", "sl", "be", "manual", "CLOSE"
+    closed_time_utc: datetime (UTC) kur u mbyll sinjali
+    """
+    title = f"{signal.symbol} {signal.direction} ({signal.timeframe}) CLOSED"
+    # Format time in Europe/Belgrade
+    belgrade_tz = ZoneInfo("Europe/Belgrade")
+    if closed_time_utc is None:
+        closed_time_utc = datetime.now(timezone.utc)
+    closed_time_local = closed_time_utc.astimezone(belgrade_tz)
+    time_str = closed_time_local.strftime("%Y-%m-%d %H:%M")
+    body = (
+        f"Signal CLOSED ({close_type.upper()})\n"
+        f"Entry: {signal.entry:.5f} | TP: {signal.tp:.5f} | SL: {signal.sl:.5f}\n"
+        f"Closed at: {time_str}"
+    )
+    data = {
+        "signal_id": str(signal.id),
+        "symbol": signal.symbol,
+        "direction": signal.direction,
+        "timeframe": signal.timeframe,
+        "analysis_type": signal.analysis_type or "",
+        "source": signal.source or "",
+        "closed_time": closed_time_utc.isoformat(),
+        "close_type": close_type,
+    }
+    send_push_to_all_devices(
+        title=title,
+        body=body,
+        data=data,
+        db=db,
+    )
+    print(f"[PUSH] Sent close push for signal {signal.id} at {time_str} ({close_type})", flush=True)
+
+
 # ======================================================
 #                     ROUTES
 # ======================================================
@@ -612,7 +657,13 @@ def close_signal(
     if not signal:
         raise HTTPException(status_code=404, detail="Signal not found")
 
+    from datetime import datetime, timezone
     signal.status = "closed"
+    close_event_time_utc = datetime.now(timezone.utc)
+    # Do NOT change signal.time (open time)
+    signal.closed_time = close_event_time_utc
+    signal.sl_tp_hit_time = close_event_time_utc
+    close_type = hit if hit is not None else signal.hit if signal.hit else "CLOSE"
     if hit is not None:
         signal.hit = hit
     if pnl_percent is not None:
@@ -620,7 +671,31 @@ def close_signal(
 
     db.commit()
     db.refresh(signal)
-    return signal
+
+    try:
+        send_push_for_signal_close(db, signal, close_type=close_type, closed_time_utc=close_event_time_utc)
+    except Exception as e:
+        print(f"[PUSH] Exception gjatë send_push_for_signal_close: {e}", flush=True)
+
+    # Return all times in response
+    return {
+        "id": signal.id,
+        "symbol": signal.symbol,
+        "direction": signal.direction,
+        "entry": signal.entry,
+        "tp": signal.tp,
+        "sl": signal.sl,
+        "time": signal.time.isoformat() if signal.time else None,
+        "closed_time": signal.closed_time.isoformat() if hasattr(signal, 'closed_time') and signal.closed_time else None,
+        "sl_tp_hit_time": signal.sl_tp_hit_time.isoformat() if signal.sl_tp_hit_time else None,
+        "timeframe": signal.timeframe,
+        "source": signal.source,
+        "analysis_type": signal.analysis_type,
+        "status": signal.status,
+        "hit": signal.hit,
+        "pnl_percent": signal.pnl_percent,
+        "extra_text": signal.extra_text,
+    }
 
 
 # ------------- REGISTER DEVICE (FCM TOKEN) -------------

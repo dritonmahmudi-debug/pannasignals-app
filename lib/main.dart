@@ -10,11 +10,15 @@ import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_analytics/firebase_analytics.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+
+import 'firebase_options.dart';
+import 'services/device_register_service.dart';
 
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -29,15 +33,22 @@ double _asDouble(dynamic v) {
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   debugPrint('💤 Background FCM message: ${message.messageId}');
 }
 
+  // Wrap everything in runZonedGuarded to capture uncaught errors
+  runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
 Future<void> main() async {
   // Wrap everything in runZonedGuarded to capture uncaught errors
   runZonedGuarded(() async {
     WidgetsFlutterBinding.ensureInitialized();
-    await Firebase.initializeApp();
+    // Guard Firebase initialization
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+    }
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
     // Initialize Crashlytics: forward uncaught Flutter errors.
     FlutterError.onError = (details) {
@@ -50,6 +61,9 @@ Future<void> main() async {
     await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(!kDebugMode);
 
     FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+
+    // Register device FCM token with backend
+    await DeviceRegisterService().registerDeviceFCMToken();
 
     // Initialize premium/billing manager
     unawaited(premiumManager.initialize());
@@ -1344,104 +1358,164 @@ class HomeScreenState extends State<HomeScreen> {
     final filtered = _filteredSignals;
 
     return SafeArea(
-      child: RefreshIndicator(
-        onRefresh: _loadSignals,
-        child: CustomScrollView(
-          slivers: [
-            SliverAppBar(
-              floating: true,
-              pinned: true,
-              title: const Text('Signals'),
-              actions: [
-                IconButton(
-                  icon: const Icon(Icons.bar_chart),
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const StatisticsScreen()),
-                    );
-                  },
-                  tooltip: 'Statistics',
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed: _loadSignals,
-                ),
-              ],
-              bottom: PreferredSize(
-                preferredSize: const Size.fromHeight(56),
-                child: Container(
-                  alignment: Alignment.centerLeft,
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  height: 56,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        // "All" filter chip
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8.0),
-                          child: FilterChip(
-                            label: const Text('All'),
-                            selected: _selectedFilter == null,
-                            onSelected: (_) => setState(() => _selectedFilter = null),
-                          ),
-                        ),
-                        ...AnalysisType.values.map((t) {
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 8.0),
-                            child: FilterChip(
-                              label: Text(t.label),
-                              selected: _selectedFilter == t,
-                              onSelected: (_) => setState(() => _selectedFilter = t),
+      child: Stack(
+        children: [
+          RefreshIndicator(
+            onRefresh: _loadSignals,
+            child: CustomScrollView(
+              slivers: [
+                SliverAppBar(
+                  floating: true,
+                  pinned: true,
+                  title: const Text('Signals'),
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.bar_chart),
+                      onPressed: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const StatisticsScreen()),
+                        );
+                      },
+                      tooltip: 'Statistics',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: _loadSignals,
+                    ),
+                  ],
+                  bottom: PreferredSize(
+                    preferredSize: const Size.fromHeight(56),
+                    child: Container(
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      height: 56,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Row(
+                          children: [
+                            // "All" filter chip
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8.0),
+                              child: FilterChip(
+                                label: const Text('All'),
+                                selected: _selectedFilter == null,
+                                onSelected: (_) => setState(() => _selectedFilter = null),
+                              ),
                             ),
-                          );
-                        }),
-                      ],
+                            ...AnalysisType.values.map((t) {
+                              return Padding(
+                                padding: const EdgeInsets.only(right: 8.0),
+                                child: FilterChip(
+                                  label: Text(t.label),
+                                  selected: _selectedFilter == t,
+                                  onSelected: (_) => setState(() => _selectedFilter = t),
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 ),
-              ),
-            ),
 
-            SliverToBoxAdapter(
-              child: _loading
-                  ? const Padding(
-                      padding: EdgeInsets.only(top: 80.0),
-                      child: Center(child: CircularProgressIndicator()),
-                    )
-                  : _error != null
-                      ? Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Text('Error: $_error', style: const TextStyle(color: Colors.redAccent)),
+                SliverToBoxAdapter(
+                  child: _loading
+                      ? const Padding(
+                          padding: EdgeInsets.only(top: 80.0),
+                          child: Center(child: CircularProgressIndicator()),
                         )
-                      : filtered.isEmpty
-                          ? const Padding(
-                              padding: EdgeInsets.all(24.0),
-                              child: Center(
-                                child: Text('No signals at the moment.', style: TextStyle(color: Colors.grey)),
-                              ),
+                      : _error != null
+                          ? Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Text('Error: $_error', style: const TextStyle(color: Colors.redAccent)),
                             )
-                          : const SizedBox.shrink(),
-            ),
-
-            if (!_loading && _error == null && filtered.isNotEmpty)
-              SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final signal = filtered[index];
-                    return SignalCard(
-                      signal: signal,
-                      isFavorite: favoritesManager.isFavorite(signal),
-                      isPremium: premiumManager.isPremium || _isAdmin,
-                      onTap: () => _openDetails(signal),
-                      onFavoriteToggle: () => _toggleFavorite(signal),
-                    );
-                  },
-                  childCount: filtered.length,
+                          : filtered.isEmpty
+                              ? const Padding(
+                                  padding: EdgeInsets.all(24.0),
+                                  child: Center(
+                                    child: Text('No signals at the moment.', style: TextStyle(color: Colors.grey)),
+                                  ),
+                                )
+                              : const SizedBox.shrink(),
                 ),
+
+                if (!_loading && _error == null && filtered.isNotEmpty)
+                  SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final signal = filtered[index];
+                        return SignalCard(
+                          signal: signal,
+                          isFavorite: favoritesManager.isFavorite(signal),
+                          isPremium: premiumManager.isPremium || _isAdmin,
+                          onTap: () => _openDetails(signal),
+                          onFavoriteToggle: () => _toggleFavorite(signal),
+                        );
+                      },
+                      childCount: filtered.length,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          // TEMP DEBUG BUTTON: Register Device (visible only in debug mode)
+          if (kDebugMode)
+            Positioned(
+              right: 16,
+              bottom: 16,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurple),
+                child: const Text('Register Device'),
+                onPressed: () async {
+                  try {
+                    // 1) Request notification permission (iOS)
+                    final messaging = FirebaseMessaging.instance;
+                    if (!kIsWeb && Platform.isIOS) {
+                      await messaging.requestPermission(alert: true, badge: true, sound: true);
+                    }
+                    // 2) Get FCM token
+                    final token = await messaging.getToken();
+                    if (token == null || token.isEmpty) {
+                      debugPrint('[RegisterDevice] FCM token is null/empty');
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('FCM token is null/empty')));
+                      return;
+                    }
+                    // 3) POST to backend
+                    final info = await PackageInfo.fromPlatform();
+                    final appVersion = info.version;
+                    final url = Uri.parse('http://194.163.165.198:8000/register_device');
+                    final body = {
+                      'token': token,
+                      'platform': Platform.isIOS ? 'ios' : 'android',
+                      'app_version': appVersion,
+                    };
+                    debugPrint('[RegisterDevice] URL: $url');
+                    debugPrint('[RegisterDevice] token length: ${token.length}');
+                    final resp = await http.post(
+                      url,
+                      headers: {'Content-Type': 'application/json'},
+                      body: jsonEncode(body),
+                    );
+                    debugPrint('[RegisterDevice] status: ${resp.statusCode}');
+                    debugPrint('[RegisterDevice] body: ${resp.body}');
+                    // 4) Show SnackBar
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Token: ${token.length} chars\nStatus: ${resp.statusCode}\nResp: ${resp.body.substring(0, resp.body.length > 120 ? 120 : resp.body.length)}'),
+                        duration: const Duration(seconds: 5),
+                      ),
+                    );
+                  } catch (e, st) {
+                    debugPrint('[RegisterDevice] ERROR: $e\n$st');
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Register failed: $e')),
+                    );
+                  }
+                },
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }

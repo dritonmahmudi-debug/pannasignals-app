@@ -60,6 +60,17 @@
 			<!-- Keep false to enforce HTTPS. If you need exceptions for local dev, add specific exceptions here. -->
 			<key>NSAllowsArbitraryLoads</key>
 			<false/>
+			<!-- Exception for dev backend HTTP (194.163.165.198). Remove for production, use HTTPS. -->
+			<key>NSExceptionDomains</key>
+			<dict>
+				<key>194.163.165.198</key>
+				<dict>
+					<key>NSExceptionAllowsInsecureHTTPLoads</key>
+					<true/>
+					<key>NSIncludesSubdomains</key>
+					<true/>
+				</dict>
+			</dict>
 		</dict>
 		<!-- Keep Firebase delegate proxy enabled (default true). Only change if you use manual swizzling handling. -->
 		<key>FirebaseAppDelegateProxyEnabled</key>
