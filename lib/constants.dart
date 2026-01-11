@@ -4,3 +4,6 @@ const String kStoreUrl = 'https://play.google.com/store/apps/details?id=com.exam
 const String kAdminEmail = 'admin@example.com';
 const String kPrivacyUrlOnline = 'https://example.com/privacy.html';
 const String kPrivacyContactEmail = 'privacy@example.com';
+
+// Backend API base URL
+const String kApiBaseUrl = 'https://pannasignals.com/api';

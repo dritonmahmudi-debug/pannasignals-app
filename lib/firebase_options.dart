@@ -65,4 +65,5 @@ class DefaultFirebaseOptions {
     storageBucket: 'planning-with-ai-702fa.firebasestorage.app',
     iosBundleId: 'com.panna.signalsApp',
   );
+
 }
