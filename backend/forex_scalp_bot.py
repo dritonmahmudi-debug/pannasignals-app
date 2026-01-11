@@ -19,6 +19,12 @@ def fetch_ohlc(symbol, interval, lookback_days=LOOKBACK_BARS):
     df.columns = [c.lower() for c in df.columns]
     return df
 
+# ===================== SIGNAL LOGIC + AUTO CLOSE =====================
+import threading
+
+open_signals = {}
+open_signals_lock = threading.Lock()
+
 # === Helper: EMA ===
 def ema(series, length):
     return series.ewm(span=length, adjust=False).mean()
@@ -103,7 +109,56 @@ def entry_trigger_lower_tf(df, trend):
     return False
 # =========================
 # STRATEGY HELPERS (shared)
+
+
 # =========================
+    """
+    Kontrollon sinjalet e hapura nëse preket TP/SL dhe i mbyll automatikisht.
+    """
+    with open_signals_lock:
+        to_close = []
+        for signal_id, sig in open_signals.items():
+            if sig["status"] != "open":
+                continue
+            symbol = sig["symbol"]
+            direction = sig["direction"]
+            sl = sig["sl"]
+            tp = sig["tp"]
+            # Merr çmimin aktual
+            try:
+                df = fetch_ohlc(symbol, TF_ENTRY, 1)
+                if df.empty:
+                    continue
+                price = df['close'].iloc[-1]
+                close_type = None
+                if direction == "BUY":
+                    if price <= sl:
+                        close_type = "sl"
+                    elif price >= tp:
+                        close_type = "tp"
+                else:
+                    if price >= sl:
+                        close_type = "sl"
+                    elif price <= tp:
+                        close_type = "tp"
+                if close_type:
+                    to_close.append((signal_id, close_type, price))
+            except Exception as e:
+                print(f"[AUTO-CLOSE] Error checking {symbol}: {e}")
+        # Mbyll sinjalet që kanë prekur TP/SL
+        for signal_id, close_type, price in to_close:
+            try:
+                resp = requests.post(f"{BACKEND_URL}/{signal_id}/close", json={
+                    "hit": close_type,
+                    "pnl_percent": None
+                }, timeout=5)
+                if resp.ok:
+                    print(f"[AUTO-CLOSE] Signal {signal_id} closed ({close_type}) at price={price}")
+                    open_signals[signal_id]["status"] = "closed"
+                else:
+                    print(f"[AUTO-CLOSE] Error closing signal {signal_id}: {resp.status_code} {resp.text}")
+            except Exception as e:
+                print(f"[AUTO-CLOSE] Exception closing signal {signal_id}: {e}")
 def ema(series, length):
     return series.ewm(span=length, adjust=False).mean()
 
@@ -743,6 +798,10 @@ def main_loop():
             except Exception:
                 print(f"[{symbol}] Exception in analyze_symbol:")
                 traceback.print_exc()
+            try:
+                check_and_close_signals()
+            except Exception as e:
+                print(f"[AUTO-CLOSE] Exception in check_and_close_signals: {e}")
         print(f"Sleeping {SLEEP_SECONDS} seconds...\n")
         time.sleep(SLEEP_SECONDS)
 

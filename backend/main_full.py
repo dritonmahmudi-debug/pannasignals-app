@@ -389,13 +389,9 @@ def send_push_for_signal(db: Session, signal: Signal):
     Ndërton titull/body për push nga një Signal dhe e dërgon te të gjithë device-t.
     """
     title = f"{signal.symbol} {signal.direction} ({signal.timeframe})"
-
     body = (
-        f"Entry: {signal.entry:.5f} | "
-        f"TP: {signal.tp:.5f} | "
-        f"SL: {signal.sl:.5f}"
+        f"Entry: {signal.entry:.5f} | TP: {signal.tp:.5f} | SL: {signal.sl:.5f}"
     )
-
     data = {
         "signal_id": str(signal.id),
         "symbol": signal.symbol,
@@ -403,8 +399,8 @@ def send_push_for_signal(db: Session, signal: Signal):
         "timeframe": signal.timeframe,
         "analysis_type": signal.analysis_type or "",
         "source": signal.source or "",
+        "time": signal.time.isoformat() if signal.time else None,
     }
-
     send_push_to_all_devices(
         title=title,
         body=body,
@@ -420,16 +416,13 @@ def send_push_for_signal_close(db, signal, close_type="CLOSE", closed_time_utc=N
     closed_time_utc: datetime (UTC) kur u mbyll sinjali
     """
     title = f"{signal.symbol} {signal.direction} ({signal.timeframe}) CLOSED"
-    # Format time in Europe/Belgrade
-    belgrade_tz = ZoneInfo("Europe/Belgrade")
-    if closed_time_utc is None:
-        closed_time_utc = datetime.now(timezone.utc)
-    closed_time_local = closed_time_utc.astimezone(belgrade_tz)
-    time_str = closed_time_local.strftime("%Y-%m-%d %H:%M")
+    # Always use UTC ISO for closed_time/sl_tp_hit_time
+    closed_time = getattr(signal, 'closed_time', None) or closed_time_utc or datetime.now(timezone.utc)
+    sl_tp_hit_time = getattr(signal, 'sl_tp_hit_time', None) or closed_time
     body = (
         f"Signal CLOSED ({close_type.upper()})\n"
         f"Entry: {signal.entry:.5f} | TP: {signal.tp:.5f} | SL: {signal.sl:.5f}\n"
-        f"Closed at: {time_str}"
+        f"Closed at: {closed_time.isoformat().replace('+00:00','Z')}"
     )
     data = {
         "signal_id": str(signal.id),
@@ -438,7 +431,8 @@ def send_push_for_signal_close(db, signal, close_type="CLOSE", closed_time_utc=N
         "timeframe": signal.timeframe,
         "analysis_type": signal.analysis_type or "",
         "source": signal.source or "",
-        "closed_time": closed_time_utc.isoformat(),
+        "closed_time": closed_time.isoformat().replace('+00:00','Z'),
+        "sl_tp_hit_time": sl_tp_hit_time.isoformat().replace('+00:00','Z'),
         "close_type": close_type,
     }
     send_push_to_all_devices(
@@ -447,7 +441,7 @@ def send_push_for_signal_close(db, signal, close_type="CLOSE", closed_time_utc=N
         data=data,
         db=db,
     )
-    print(f"[PUSH] Sent close push for signal {signal.id} at {time_str} ({close_type})", flush=True)
+    print(f"[PUSH] Sent close push for signal {signal.id} at {closed_time.isoformat().replace('+00:00','Z')} ({close_type})", flush=True)
 
 
 # ======================================================

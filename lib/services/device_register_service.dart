@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:developer';
+import 'dart:convert';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:http/http.dart' as http;
@@ -49,7 +50,7 @@ class DeviceRegisterService {
       final resp = await http.post(
         url,
         headers: {'Content-Type': 'application/json'},
-        body: http.Request('POST', url).body = http.JsonEncoder().convert(body),
+        body: json.encode(body),
       );
       log('[DeviceRegister] Status: ${resp.statusCode}, Body: ${resp.body}');
     } catch (e, st) {
@@ -71,7 +72,7 @@ class DeviceRegisterService {
         final resp = await http.post(
           url,
           headers: {'Content-Type': 'application/json'},
-          body: http.Request('POST', url).body = http.JsonEncoder().convert(body),
+          body: json.encode(body),
         );
         log('[DeviceRegister] TokenRefresh Status: ${resp.statusCode}, Body: ${resp.body}');
       } catch (e, st) {

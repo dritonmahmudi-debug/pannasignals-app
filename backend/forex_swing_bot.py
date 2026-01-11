@@ -1024,6 +1024,10 @@ def main_loop():
             except Exception:
                 print(f"[{symbol}] Exception in analyze_symbol:")
                 traceback.print_exc()
+        try:
+            check_and_close_signals()
+        except Exception as e:
+            print(f"[AUTO-CLOSE] Exception in check_and_close_signals: {e}")
         print(f"Sleeping {SLEEP_SECONDS} seconds...\n")
         time.sleep(SLEEP_SECONDS)
 
